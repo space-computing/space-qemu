@@ -66,6 +66,11 @@ static void virtio_gpu_gl_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(vdev);
     struct virtio_gpu_ctrl_command *cmd;
 
+    if (sp_remote_mode() == SP_REMOTE_SOURCE) {
+        sp_source_handle_ctrl(g, vq);
+        return;
+    }
+
     if (!virtio_queue_ready(vq)) {
         return;
     }
@@ -109,6 +114,11 @@ static void virtio_gpu_gl_reset(VirtIODevice *vdev)
 
     virtio_gpu_reset(vdev);
 
+    if (sp_remote_mode() == SP_REMOTE_SOURCE) {
+        sp_source_reset(g);
+        return;
+    }
+
     /*
      * GL functions must be called with the associated GL context in main
      * thread, and when the renderer is unblocked.
@@ -134,7 +144,7 @@ static void virtio_gpu_gl_device_realize(DeviceState *qdev, Error **errp)
         return;
     }
 
-    if (!display_opengl) {
+    if (!display_opengl && sp_remote_mode() != SP_REMOTE_SOURCE) {
         error_setg(errp,
                    "The display backend does not have OpenGL support enabled");
         error_append_hint(errp,
@@ -145,7 +155,15 @@ static void virtio_gpu_gl_device_realize(DeviceState *qdev, Error **errp)
     }
 
     g->parent_obj.conf.flags |= (1 << VIRTIO_GPU_FLAG_VIRGL_ENABLED);
-    g->capset_ids = virtio_gpu_virgl_get_capsets(g);
+    if (sp_remote_mode() == SP_REMOTE_SOURCE) {
+        /* The sink answers capset queries; advertise the two virgl sets. */
+        uint32_t ids[] = { VIRTIO_GPU_CAPSET_VIRGL, VIRTIO_GPU_CAPSET_VIRGL2 };
+
+        g->capset_ids = g_array_new(false, false, sizeof(uint32_t));
+        g_array_append_vals(g->capset_ids, ids, G_N_ELEMENTS(ids));
+    } else {
+        g->capset_ids = virtio_gpu_virgl_get_capsets(g);
+    }
     VIRTIO_GPU_BASE(g)->virtio_config.num_capsets = g->capset_ids->len;
 
 #if VIRGL_VERSION_MAJOR >= 1
@@ -153,6 +171,9 @@ static void virtio_gpu_gl_device_realize(DeviceState *qdev, Error **errp)
 #endif
 
     virtio_gpu_device_realize(qdev, errp);
+    if (!*errp) {
+        sp_remote_realize(g, errp);
+    }
 }
 
 static const Property virtio_gpu_gl_properties[] = {
@@ -195,6 +216,9 @@ static void virtio_gpu_gl_class_init(ObjectClass *klass, void *data)
     vgc->process_cmd = virtio_gpu_virgl_process_cmd;
     vgc->update_cursor_data = virtio_gpu_gl_update_cursor_data;
     vgc->resource_destroy = virtio_gpu_virgl_resource_destroy;
+    if (sp_remote_mode() == SP_REMOTE_SOURCE) {
+        vgc->resource_destroy = sp_source_resource_destroy;
+    }
 
     vdc->realize = virtio_gpu_gl_device_realize;
     vdc->unrealize = virtio_gpu_gl_device_unrealize;

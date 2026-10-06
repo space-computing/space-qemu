@@ -139,6 +139,14 @@ struct virtio_gpu_ctrl_command {
     bool finished;
     /* Set if process_cmd deferred completion; keep at cmdq head for resume. */
     bool suspended;
+    /* Spacetop remote GPU, sink side: command received from a remote source. */
+    bool sp_remote;
+    uint32_t sp_res;
+    uint64_t sp_seq;
+    uint64_t sp_off;
+    uint64_t sp_len;
+    void *sp_snap;
+    void *sp_expect;
     QTAILQ_ENTRY(virtio_gpu_ctrl_command) next;
 };
 
@@ -393,5 +401,29 @@ void virtio_gpu_virgl_resource_destroy(VirtIOGPU *g,
                                        Error **errp);
 int virtio_gpu_virgl_init(VirtIOGPU *g);
 GArray *virtio_gpu_virgl_get_capsets(VirtIOGPU *g);
+
+/* Spacetop remote GPU (hw/display/virtio-gpu-remote.c) */
+enum { SP_REMOTE_NONE, SP_REMOTE_SOURCE, SP_REMOTE_SINK };
+int sp_remote_mode(void);
+void sp_remote_realize(VirtIOGPU *g, Error **errp);
+void sp_source_handle_ctrl(VirtIOGPU *g, VirtQueue *vq);
+void sp_source_cursor(VirtIOGPU *g, struct virtio_gpu_update_cursor *c);
+void sp_source_reset(VirtIOGPU *g);
+void sp_source_resource_destroy(VirtIOGPU *g,
+                                struct virtio_gpu_simple_resource *res,
+                                Error **errp);
+void sp_sink_response(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd,
+                      struct virtio_gpu_ctrl_hdr *resp, size_t resp_len);
+int sp_sink_create_mapping(VirtIOGPU *g, uint32_t nr_entries, uint32_t offset,
+                           struct virtio_gpu_ctrl_command *cmd,
+                           struct iovec **iov, uint32_t *niov);
+void sp_sink_cleanup_mapping(struct iovec *iov, uint32_t count);
+void sp_sink_snapshot_readback(struct virtio_gpu_ctrl_command *cmd);
+void sp_sink_notify_event(uint32_t event_type);
+void sp_sink_after_submit(struct virtio_gpu_ctrl_command *cmd);
+void sp_sink_poll_watches(void);
+void virtio_gpu_sp_update_cursor(VirtIOGPU *g,
+                                 struct virtio_gpu_update_cursor *cursor);
+void virtio_gpu_base_sp_notify_event(VirtIOGPUBase *g, uint32_t event_type);
 
 #endif

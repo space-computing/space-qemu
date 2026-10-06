@@ -297,6 +297,41 @@ COREAUDIO_WRAPPER_FUNC(write, size_t, (HWVoiceOut *hw, void *buf, size_t size),
  * callback to feed audiooutput buffer. called without BQL.
  * allowed to lock "buf_mutex", but disallowed to have any other locks.
  */
+/*
+ * Spacetop: how often the device asked for sound and found too little waiting
+ * (it then plays nothing for that whole request). Read by the remote-GPU sink's
+ * statistics, hw/display/virtio-gpu-remote.c.
+ */
+static struct {
+    uint64_t requests, starved;
+    uint64_t starved_total;     /* never reset */
+    uint32_t frames, least_waiting;
+    uint32_t request_us;        /* how much sound one request takes */
+} spacetop_ca = { .least_waiting = UINT32_MAX };
+
+uint64_t spacetop_coreaudio_starved_total(void);
+uint64_t spacetop_coreaudio_starved_total(void)
+{
+    return qatomic_read(&spacetop_ca.starved_total);
+}
+
+uint32_t spacetop_coreaudio_request_us(void);
+uint32_t spacetop_coreaudio_request_us(void)
+{
+    return qatomic_read(&spacetop_ca.request_us);
+}
+
+void spacetop_coreaudio_stats(uint64_t *requests, uint64_t *starved,
+                              uint32_t *frames, uint32_t *least_waiting);
+void spacetop_coreaudio_stats(uint64_t *requests, uint64_t *starved,
+                              uint32_t *frames, uint32_t *least_waiting)
+{
+    *requests = qatomic_xchg(&spacetop_ca.requests, 0);
+    *starved = qatomic_xchg(&spacetop_ca.starved, 0);
+    *frames = spacetop_ca.frames;
+    *least_waiting = qatomic_xchg(&spacetop_ca.least_waiting, UINT32_MAX);
+}
+
 static OSStatus audioDeviceIOProc(
     AudioDeviceID inDevice,
     const AudioTimeStamp *inNow,
@@ -324,9 +359,20 @@ static OSStatus audioDeviceIOProc(
 
     frameCount = core->audioDevicePropertyBufferFrameSize;
     pending_frames = hw->pending_emul / hw->info.bytes_per_frame;
+    spacetop_ca.frames = frameCount;
+    if (hw->info.freq) {
+        qatomic_set(&spacetop_ca.request_us,
+                    (uint32_t)((uint64_t)frameCount * 1000000 / hw->info.freq));
+    }
+    qatomic_inc(&spacetop_ca.requests);
+    if (pending_frames < qatomic_read(&spacetop_ca.least_waiting)) {
+        qatomic_set(&spacetop_ca.least_waiting, pending_frames);
+    }
 
     /* if there are not enough samples, set signal and return */
     if (pending_frames < frameCount) {
+        qatomic_inc(&spacetop_ca.starved);
+        qatomic_inc(&spacetop_ca.starved_total);
         inInputTime = 0;
         coreaudio_buf_unlock (core, "audioDeviceIOProc(empty)");
         return 0;

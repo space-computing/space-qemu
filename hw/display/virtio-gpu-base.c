@@ -82,8 +82,18 @@ static void virtio_gpu_text_update(void *opaque, console_ch_t *chardata)
 
 static void virtio_gpu_notify_event(VirtIOGPUBase *g, uint32_t event_type)
 {
+    if (sp_remote_mode() == SP_REMOTE_SINK) {
+        /* No guest here: tell the remote source instead. */
+        sp_sink_notify_event(event_type);
+        return;
+    }
     g->virtio_config.events_read |= event_type;
     virtio_notify_config(&g->parent_obj);
+}
+
+void virtio_gpu_base_sp_notify_event(VirtIOGPUBase *g, uint32_t event_type)
+{
+    virtio_gpu_notify_event(g, event_type);
 }
 
 static void virtio_gpu_ui_info(void *opaque, uint32_t idx, QemuUIInfo *info)

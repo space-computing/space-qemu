@@ -578,6 +578,9 @@ static void virgl_cmd_submit_3d(VirtIOGPU *g,
     }
 
     virgl_renderer_submit_cmd(buf, cs.hdr.ctx_id, cs.size / 4);
+    if (cmd->sp_remote) {
+        sp_sink_after_submit(cmd);
+    }
 
 out:
     g_free(buf);
@@ -641,6 +644,9 @@ virgl_cmd_transfer_from_host_3d(VirtIOGPU *g,
                                      tf3d.layer_stride,
                                      (struct virgl_box *)&tf3d.box,
                                      tf3d.offset, NULL, 0);
+    if (cmd->sp_remote) {
+        sp_sink_snapshot_readback(cmd);
+    }
 }
 
 
@@ -1255,6 +1261,9 @@ static void virtio_gpu_fence_poll(void *opaque)
 
     virgl_renderer_poll();
     virtio_gpu_process_cmdq(g);
+    if (sp_remote_mode() == SP_REMOTE_SINK) {
+        sp_sink_poll_watches();
+    }
     if (!QTAILQ_EMPTY(&g->cmdq) || !QTAILQ_EMPTY(&g->fenceq)) {
         /*
          * On the render-server path virgl_renderer_poll() is the only place a

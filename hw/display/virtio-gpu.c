@@ -113,6 +113,12 @@ static void update_cursor(VirtIOGPU *g, struct virtio_gpu_update_cursor *cursor)
     dpy_mouse_set(s->con, cursor->pos.x, cursor->pos.y, cursor->resource_id);
 }
 
+void virtio_gpu_sp_update_cursor(VirtIOGPU *g,
+                                 struct virtio_gpu_update_cursor *cursor)
+{
+    update_cursor(g, cursor);
+}
+
 struct virtio_gpu_simple_resource *
 virtio_gpu_find_resource(VirtIOGPU *g, uint32_t resource_id)
 {
@@ -168,6 +174,11 @@ void virtio_gpu_ctrl_response(VirtIOGPU *g,
         resp->flags |= VIRTIO_GPU_FLAG_FENCE;
         resp->fence_id = cmd->cmd_hdr.fence_id;
         resp->ctx_id = cmd->cmd_hdr.ctx_id;
+    }
+    if (cmd->sp_remote) {
+        sp_sink_response(g, cmd, resp, resp_len);
+        cmd->finished = true;
+        return;
     }
     virtio_gpu_ctrl_hdr_bswap(resp);
     s = iov_from_buf(cmd->elem.in_sg, cmd->elem.in_num, 0, resp, resp_len);
@@ -820,6 +831,13 @@ int virtio_gpu_create_mapping_iov(VirtIOGPU *g,
     size_t esize, s;
     int e, v;
 
+    if (sp_remote_mode() == SP_REMOTE_SINK) {
+        if (addr) {
+            *addr = NULL;
+        }
+        return sp_sink_create_mapping(g, nr_entries, offset, cmd, iov, niov);
+    }
+
     if (nr_entries > 16384) {
         qemu_log_mask(LOG_GUEST_ERROR,
                       "%s: nr_entries is too big (%d > 16384)\n",
@@ -894,6 +912,11 @@ void virtio_gpu_cleanup_mapping_iov(VirtIOGPU *g,
                                     struct iovec *iov, uint32_t count)
 {
     int i;
+
+    if (sp_remote_mode() == SP_REMOTE_SINK) {
+        sp_sink_cleanup_mapping(iov, count);
+        return;
+    }
 
     for (i = 0; i < count; i++) {
         dma_memory_unmap(VIRTIO_DEVICE(g)->dma_as,
@@ -1171,7 +1194,11 @@ static void virtio_gpu_handle_cursor(VirtIODevice *vdev, VirtQueue *vq)
                           __func__, s, sizeof(cursor_info));
         } else {
             virtio_gpu_bswap_32(&cursor_info, sizeof(cursor_info));
-            update_cursor(g, &cursor_info);
+            if (sp_remote_mode() == SP_REMOTE_SOURCE) {
+                sp_source_cursor(g, &cursor_info);
+            } else {
+                update_cursor(g, &cursor_info);
+            }
         }
         virtqueue_push(vq, elem, 0);
         virtio_notify(vdev, vq);
