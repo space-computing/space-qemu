@@ -100,6 +100,16 @@ static void spacetop_update_ui_info(struct sdl2_console *scon)
     SDL_GetWindowSize(scon->real_window, &width, &height);
     info.width = width * spacetop_pixel_scale();
     info.height = height * spacetop_pixel_scale();
+    if (spacetop_pixel_scale() == 2) {
+        /*
+         * Tell the guest how dense the pixels are (220 per inch) through the
+         * monitor's physical size. Its compositor then picks the 2x scale by
+         * itself for every new size; with QEMU's default of 100 per inch it
+         * came up at 1x first and had to be corrected afterwards.
+         */
+        info.width_mm = info.width * 254 / 10 / 220;
+        info.height_mm = info.height * 254 / 10 / 220;
+    }
     if (SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(scon->real_window), &dm) == 0 && dm.refresh_rate > 0) {
         info.refresh_rate = dm.refresh_rate * 1000;
     }

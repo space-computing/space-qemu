@@ -77,6 +77,9 @@ static void *sp_present_thread(void *opaque)
     const char *stats_env = getenv("SPACETOP_PRESENT_STATS");
     int64_t stats_us = stats_env ? (int64_t)MAX(atoi(stats_env), 1) * 1000000 : 0;
     int64_t refresh_us = 8333, last_swap = 0, held_max = 0, phase_adj = 0;
+    /* where between two refreshes a frame's time is kept: this fraction of a
+     * refresh before the one it is shown at (SPACETOP_PRESENT_PHASE_TARGET) */
+    double phase_target = getenv("SPACETOP_PRESENT_PHASE_TARGET") ? atof(getenv("SPACETOP_PRESENT_PHASE_TARGET")) : 0.5;
     bool waited_for_due = false;
     uint64_t held[7] = { 0 };
     {
@@ -209,7 +212,7 @@ static void *sp_present_thread(void *opaque)
              */
             int64_t x = g_get_monotonic_time() - pick_due;
             if (x >= 0 && x < 2 * refresh_us) {
-                phase_adj += (x - refresh_us / 2) / 16;
+                phase_adj += (x - (int64_t)(refresh_us * phase_target)) / 16;
                 phase_adj = MAX(-refresh_us, MIN(phase_adj, refresh_us));
             }
         }
