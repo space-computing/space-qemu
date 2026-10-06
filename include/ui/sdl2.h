@@ -44,6 +44,8 @@ struct sdl2_console {
     int ignore_hotkeys;
     bool gui_keysym;
     SDL_GLContext winctx;
+    SDL_GLContext renderctx;
+    void *presenter;
     QKbdState *kbd;
 #ifdef CONFIG_OPENGL
     QemuGLShader *gls;
@@ -71,6 +73,9 @@ void sdl2_2d_refresh(DisplayChangeListener *dcl);
 void sdl2_2d_redraw(struct sdl2_console *scon);
 bool sdl2_2d_check_format(DisplayChangeListener *dcl,
                           pixman_format_code_t format);
+
+void sdl2_gl_present_init(struct sdl2_console *scon);
+void sdl2_gl_present_destroy(struct sdl2_console *scon);
 
 void sdl2_gl_update(DisplayChangeListener *dcl,
                     int x, int y, int w, int h);

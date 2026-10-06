@@ -31,6 +31,7 @@
 #include "ui/sdl2.h"
 #include "spacetop-capture.h"
 #include "spacetop-pacing.h"
+#include "spacetop-presenter.h"
 
 static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
 {
@@ -52,10 +53,23 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
 {
     int ww, wh;
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
     sdl2_set_scanout_mode(scon, false);
 
     SDL_GL_GetDrawableSize(scon->real_window, &ww, &wh);
+#ifdef CONFIG_DARWIN
+    if (scon->presenter) {
+        SpSlot *slot = sp_present_acquire(scon, ww, wh);
+        if (!slot) return;
+        glBindFramebuffer(GL_FRAMEBUFFER, slot->fb.framebuffer);
+        surface_gl_setup_viewport(scon->gls, scon->surface, ww, wh);
+        glBindTexture(GL_TEXTURE_2D, scon->surface->texture);
+        surface_gl_render_texture(scon->gls, scon->surface);
+        sp_present_submit(scon, slot);
+        return;
+    }
+#endif
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     surface_gl_setup_viewport(scon->gls, scon->surface, ww, wh);
 
     surface_gl_render_texture(scon->gls, scon->surface);
@@ -74,7 +88,7 @@ void sdl2_gl_update(DisplayChangeListener *dcl,
         return;
     }
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
     surface_gl_update_texture(scon->gls, scon->surface, x, y, w, h);
     scon->updates++;
 }
@@ -87,7 +101,7 @@ void sdl2_gl_switch(DisplayChangeListener *dcl,
 
     assert(scon->opengl);
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
     surface_gl_destroy_texture(scon->gls, scon->surface);
 
     scon->surface = new_surface;
@@ -147,7 +161,7 @@ QEMUGLContext sdl2_gl_create_context(DisplayGLCtx *dgc,
 
     assert(scon->opengl);
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
 
     SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
     if (scon->opts->gl == DISPLAY_GL_MODE_ON ||
@@ -220,7 +234,7 @@ void sdl2_gl_scanout_texture(DisplayChangeListener *dcl,
     scon->h = h;
     scon->y0_top = backing_y_0_top;
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
 
     sdl2_set_scanout_mode(scon, true);
     egl_fb_setup_for_tex(&scon->guest_fb, backing_width, backing_height,
@@ -241,9 +255,18 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
         return;
     }
 
-    SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
+    SDL_GL_MakeCurrent(scon->real_window, scon->renderctx ? scon->renderctx : scon->winctx);
 
     SDL_GL_GetDrawableSize(scon->real_window, &ww, &wh);
+#ifdef CONFIG_DARWIN
+    if (scon->presenter) {
+        SpSlot *slot = sp_present_acquire(scon, ww, wh);
+        if (!slot) return;
+        egl_fb_blit(&slot->fb, &scon->guest_fb, !scon->y0_top);
+        sp_present_submit(scon, slot);
+        return;
+    }
+#endif
     egl_fb_setup_default(&scon->win_fb, ww, wh);
     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
 

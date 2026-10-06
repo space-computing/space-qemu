@@ -162,6 +162,9 @@ void sdl2_window_create(struct sdl2_console *scon)
         SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(scon->real_window), &dm);
         fprintf(stderr, "[SPACETOP-SYNC] requested=%d actual=%d rc=%d display_hz=%d mode=%dx%d\n",
                 requested, SDL_GL_GetSwapInterval(), rc, dm.refresh_rate, dm.w, dm.h);
+#ifdef CONFIG_OPENGL
+        sdl2_gl_present_init(scon);
+#endif
     } else {
         /* The SDL renderer is only used by sdl2-2D, when OpenGL is disabled */
         scon->real_renderer = SDL_CreateRenderer(scon->real_window, -1, 0);
@@ -185,6 +188,9 @@ void sdl2_window_destroy(struct sdl2_console *scon)
     }
 
     if (scon->winctx) {
+#ifdef CONFIG_OPENGL
+        sdl2_gl_present_destroy(scon);
+#endif
         SDL_GL_DeleteContext(scon->winctx);
         scon->winctx = NULL;
     }
