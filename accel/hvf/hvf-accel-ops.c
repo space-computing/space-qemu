@@ -48,6 +48,7 @@
  */
 
 #include "qemu/osdep.h"
+#include <pthread/qos.h>
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
 #include "exec/address-spaces.h"
@@ -428,6 +429,19 @@ static void *hvf_cpu_thread_fn(void *arg)
     int r;
 
     assert(hvf_enabled());
+
+    const char *qos = getenv("SPACETOP_VCPU_QOS");
+    if (qos) {
+        qos_class_t before, after;
+        int relative = 0, rc = 0;
+        pthread_get_qos_class_np(pthread_self(), &before, &relative);
+        if (!strcmp(qos, "user-initiated")) {
+            rc = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+        }
+        pthread_get_qos_class_np(pthread_self(), &after, &relative);
+        fprintf(stderr, "[SPACETOP-VCPU-QOS] cpu=%d before=0x%x after=0x%x rc=%d\n",
+                cpu->cpu_index, before, after, rc);
+    }
 
     rcu_register_thread();
 
