@@ -1,5 +1,5 @@
 /*
- * Spacetop remote GPU
+ * Spacebox remote GPU
  *
  * Splits the virgl virtio-gpu device between two QEMU processes:
  *
@@ -11,25 +11,25 @@
  *           display backend. Input events of the local window go back to the
  *           source.
  *
- * SPACETOP_GPU_REMOTE_SOURCE=<unix socket>  connect to a sink (retries)
- * SPACETOP_GPU_REMOTE_SINK=<unix socket>    listen for one source
- * SPACETOP_GPU_REMOTE_STATS=1               print traffic counters every 5 s
- * SPACETOP_GPU_REMOTE_FENCE_WINDOW=<n>      source: answer up to n fenced commands
+ * SPACEBOX_GPU_REMOTE_SOURCE=<unix socket>  connect to a sink (retries)
+ * SPACEBOX_GPU_REMOTE_SINK=<unix socket>    listen for one source
+ * SPACEBOX_GPU_REMOTE_STATS=1               print traffic counters every 5 s
+ * SPACEBOX_GPU_REMOTE_FENCE_WINDOW=<n>      source: answer up to n fenced commands
  *                                           before the sink has finished them
  *                                           (default 8, 0 = wait for the sink).
  *                                           Without it every frame of the guest
  *                                           waits one network round trip.
- * SPACETOP_GPU_REMOTE_KEEP_TIMER_QUERY=1    sink: leave GPU timer queries advertised.
+ * SPACEBOX_GPU_REMOTE_KEEP_TIMER_QUERY=1    sink: leave GPU timer queries advertised.
  *                                           By default they are hidden from the
  *                                           guest: a compositor that times every
  *                                           frame with one (Mutter does) would
  *                                           block for a network round trip per
  *                                           frame.
- * SPACETOP_GPU_REMOTE_TX_LIMIT_MB=<n>       source: stop taking guest commands while
+ * SPACEBOX_GPU_REMOTE_TX_LIMIT_MB=<n>       source: stop taking guest commands while
  *                                           more than n MiB wait for the network
  *                                           (default 8). Bounds the display lag
  *                                           that queued uploads would add.
- * SPACETOP_GPU_REMOTE_ZSTD=<level>          compress the connection (default 1,
+ * SPACEBOX_GPU_REMOTE_ZSTD=<level>          compress the connection (default 1,
  *                                           0 = off; used when both ends offer
  *                                           it). See sp_z_filter().
  *
@@ -53,8 +53,8 @@
 
 #include <virglrenderer.h>
 
-#include "hw/display/spacetop-zstd.h"
-#ifdef SPACETOP_ZSTD
+#include "hw/display/spacebox-zstd.h"
+#ifdef SPACEBOX_ZSTD
 #include <zstd.h>
 #endif
 
@@ -196,7 +196,7 @@ static int64_t sp_aud_delay_us; /* sink: how much later sound is played, 0 = sil
 
 /*
  * Sink: when to show the frame of the screen update being handled (this
- * machine's clock, 0 = at once). Read by the presenter (ui/spacetop-presenter.h).
+ * machine's clock, 0 = at once). Read by the presenter (ui/spacebox-presenter.h).
  *
  * Messages cross the network with a delay that varies (a lost packet holds up
  * everything behind it), so frames the guest produced evenly arrive in bunches.
@@ -206,8 +206,8 @@ static int64_t sp_aud_delay_us; /* sink: how much later sound is played, 0 = sil
  * spacing for every frame that is late by less than the allowance. The
  * allowance follows how late recent screen updates were (95th percentile,
  * capped) and costs that much latency, so by default it is used only while
- * the guest decodes video. SPACETOP_PRESENT_JITTER=off|video|always,
- * SPACETOP_PRESENT_JITTER_MAX_MS (default 50).
+ * the guest decodes video. SPACEBOX_PRESENT_JITTER=off|video|always,
+ * SPACEBOX_PRESENT_JITTER_MAX_MS (default 50).
  *
  * The guest's own spacing is not even either: a 60 Hz video on its 120 Hz
  * desktop comes out as updates 1, 2 or 3 refreshes apart. While pacing, the
@@ -215,17 +215,17 @@ static int64_t sp_aud_delay_us; /* sink: how much later sound is played, 0 = sil
  * usual spacing of recent updates (their median, in whole refreshes), which
  * turns "1 then 3" into "2 then 2".
  */
-int64_t spacetop_frame_due_us;
-int64_t spacetop_frame_gap_us;  /* usual spacing of recent updates, 0 = not a steady stream */
+int64_t spacebox_frame_due_us;
+int64_t spacebox_frame_gap_us;  /* usual spacing of recent updates, 0 = not a steady stream */
 /*
  * When the user last pressed a key, clicked or scrolled (this machine's clock;
- * set here and by ui/spacetop-scroll.m). Pacing holds every frame back, the
- * answer to the user's input included. For SPACETOP_PRESENT_INPUT_MS after
+ * set here and by ui/spacebox-scroll.m). Pacing holds every frame back, the
+ * answer to the user's input included. For SPACEBOX_PRESENT_INPUT_MS after
  * such input (default 1500, 0 = never) frames are shown as they come instead:
  * the screen answers at once; a playing video is less even for that time and
  * runs ahead of its sound.
  */
-int64_t spacetop_last_input_us;
+int64_t spacebox_last_input_us;
 
 static struct {
     int mode;           /* 0 off, 1 video, 2 always; -1 not read yet */
@@ -255,14 +255,14 @@ static void sp_sink_pace_frame(const SpHdr *h)
     int64_t late, target, sorted[G_N_ELEMENTS(sp_pace.late)];
 
     if (sp_pace.mode < 0) {
-        const char *m = getenv("SPACETOP_PRESENT_JITTER");
-        const char *x = getenv("SPACETOP_PRESENT_JITTER_MAX_MS");
+        const char *m = getenv("SPACEBOX_PRESENT_JITTER");
+        const char *x = getenv("SPACEBOX_PRESENT_JITTER_MAX_MS");
 
         sp_pace.mode = !m || !strcmp(m, "video") ? 1 : !strcmp(m, "always") ? 2 : 0;
         sp_pace.max_us = (x ? MAX(atoi(x), 0) : 50) * 1000;
     }
-    spacetop_frame_due_us = 0;
-    spacetop_frame_gap_us = 0;
+    spacebox_frame_due_us = 0;
+    spacebox_frame_gap_us = 0;
     if (!h->t_us || base == INT64_MAX) {
         return;
     }
@@ -286,12 +286,12 @@ static void sp_sink_pace_frame(const SpHdr *h)
         return;
     }
     if (sp_pace.input_us < 0) {
-        const char *i = getenv("SPACETOP_PRESENT_INPUT_MS");
+        const char *i = getenv("SPACEBOX_PRESENT_INPUT_MS");
 
         sp_pace.input_us = (i ? MAX(atoi(i), 0) : 1500) * 1000;
     }
-    if (sp_pace.input_us && spacetop_last_input_us &&
-        now - spacetop_last_input_us < sp_pace.input_us) {
+    if (sp_pace.input_us && spacebox_last_input_us &&
+        now - spacebox_last_input_us < sp_pace.input_us) {
         sp_pace.unpaced_for_input++;
         return; /* the allowance is kept, so pacing picks up where it was */
     }
@@ -305,20 +305,20 @@ static void sp_sink_pace_frame(const SpHdr *h)
          * belongs to it (the guest's sound stack and QEMU's mixer hold it for
          * a while after the guest counts it as played) and the Mac's audio
          * output adds its own delay. Measured with a flash-and-beep clip the
-         * sound was 41 ms behind before the output delay; SPACETOP_AV_OFFSET_MS
+         * sound was 41 ms behind before the output delay; SPACEBOX_AV_OFFSET_MS
          * (default 50) holds the picture back by that much more.
          */
         static int64_t av_offset = -1;
 
         if (av_offset < 0) {
-            const char *o = getenv("SPACETOP_AV_OFFSET_MS");
+            const char *o = getenv("SPACEBOX_AV_OFFSET_MS");
 
             av_offset = (o ? MAX(atoi(o), 0) : 50) * 1000;
         }
         target = MAX(target, sp_aud_delay_us + av_offset);
     }
     /* The presenter keeps the waiting frames as textures (SP_SLOTS in
-     * ui/spacetop-presenter.h is 16); do not ask it to keep more than 12, nor
+     * ui/spacebox-presenter.h is 16); do not ask it to keep more than 12, nor
      * to wait longer than a quarter of a second. */
     target = MIN(target, MIN(MAX(12 * sp_pace.usual_gap, 40000), 250000));
     if (target > sp_pace.allowance) {
@@ -326,20 +326,20 @@ static void sp_sink_pace_frame(const SpHdr *h)
     } else {
         sp_pace.allowance -= (sp_pace.allowance - target) / 64;
     }
-    spacetop_frame_gap_us = 0;
+    spacebox_frame_gap_us = 0;
     if (sp_pace.gap_n >= 16) {
         memcpy(sorted, sp_pace.gap, sp_pace.gap_n * sizeof(sorted[0]));
         qsort(sorted, sp_pace.gap_n, sizeof(sorted[0]), sp_cmp_i64);
-        spacetop_frame_gap_us = sp_pace.usual_gap = sorted[sp_pace.gap_n / 2];
+        spacebox_frame_gap_us = sp_pace.usual_gap = sorted[sp_pace.gap_n / 2];
     }
     if (late >= sp_pace.allowance) {
         sp_pace.late_frames++;
         /* later than the allowance: as soon as the spacing allows */
-        spacetop_frame_due_us = now;
+        spacebox_frame_due_us = now;
         return;
     }
     sp_pace.paced++;
-    spacetop_frame_due_us = now - late + sp_pace.allowance;
+    spacebox_frame_due_us = now - late + sp_pace.allowance;
 }
 
 typedef struct SpPending {
@@ -409,7 +409,7 @@ static struct {
     GByteArray *rxw;        /* bytes as received, before sp_rx_unwrap() */
     bool rx_hello_in;       /* the peer's HELLO has been taken out of rxw */
     uint64_t wire_tx, wire_rx; /* bytes written to / read from the socket */
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
     ZSTD_DCtx *z_d;
 #endif
 
@@ -460,23 +460,23 @@ int sp_remote_mode(void)
         const char *p;
 
         sp.mode_known = true;
-        if ((p = getenv("SPACETOP_GPU_REMOTE_SOURCE")) && *p) {
+        if ((p = getenv("SPACEBOX_GPU_REMOTE_SOURCE")) && *p) {
             sp.mode = SP_REMOTE_SOURCE;
             sp.path = g_strdup(p);
-        } else if ((p = getenv("SPACETOP_GPU_REMOTE_SINK")) && *p) {
+        } else if ((p = getenv("SPACEBOX_GPU_REMOTE_SINK")) && *p) {
             sp.mode = SP_REMOTE_SINK;
             sp.path = g_strdup(p);
         }
-        sp.stats = getenv("SPACETOP_GPU_REMOTE_STATS") != NULL;
-        p = getenv("SPACETOP_GPU_REMOTE_FENCE_WINDOW");
+        sp.stats = getenv("SPACEBOX_GPU_REMOTE_STATS") != NULL;
+        p = getenv("SPACEBOX_GPU_REMOTE_FENCE_WINDOW");
         sp.fence_window = p ? MAX(atoi(p), 0) : 8;
-        p = getenv("SPACETOP_GPU_REMOTE_FENCE_AGE_MS");
+        p = getenv("SPACEBOX_GPU_REMOTE_FENCE_AGE_MS");
         sp.fence_age_us = (p ? MAX(atoi(p), 0) : 20) * 1000;
         sp.rtt_min_cur = sp.rtt_min_prev = INT64_MAX;
-        p = getenv("SPACETOP_GPU_REMOTE_TX_LIMIT_MB");
+        p = getenv("SPACEBOX_GPU_REMOTE_TX_LIMIT_MB");
         sp.tx_limit = (size_t)MAX(p ? atoi(p) : 8, 1) << 20;
-#ifdef SPACETOP_ZSTD
-        p = getenv("SPACETOP_GPU_REMOTE_ZSTD");
+#ifdef SPACEBOX_ZSTD
+        p = getenv("SPACEBOX_GPU_REMOTE_ZSTD");
         sp.z_level = p ? CLAMP(atoi(p), 0, 19) : 1;
 #endif
     }
@@ -485,7 +485,7 @@ int sp_remote_mode(void)
 
 /* ---- transport ---------------------------------------------------------- */
 
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
 /*
  * Picture data (texture uploads) is most of what a page full of images sends,
  * and a general compressor does little with it. Each byte is replaced by its
@@ -669,7 +669,7 @@ static int sp_rx_unwrap(void)
         sp.rx_hello_in = true;
         return 1;
     }
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
     if (sp.z_on) {
         return sp_z_unpack();
     }
@@ -684,7 +684,7 @@ static int sp_rx_unwrap(void)
 
 static void *sp_tx_thread(void *opaque)
 {
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
     ZSTD_CCtx *zc = ZSTD_createCCtx();
     uint64_t zgen = 0;
     uint8_t *zout = NULL, *ztmp = NULL;
@@ -713,13 +713,13 @@ static void *sp_tx_thread(void *opaque)
         qemu_mutex_unlock(&sp.tx_lock);
 
         {
-            /* SPACETOP_GPU_REMOTE_DUMP=<file>: copy of everything sent, to study
+            /* SPACEBOX_GPU_REMOTE_DUMP=<file>: copy of everything sent, to study
              * how well the stream compresses */
             static FILE *dump;
             static bool tried;
 
             if (!tried) {
-                const char *path = getenv("SPACETOP_GPU_REMOTE_DUMP");
+                const char *path = getenv("SPACEBOX_GPU_REMOTE_DUMP");
 
                 tried = true;
                 dump = path ? fopen(path, "wb") : NULL;
@@ -731,7 +731,7 @@ static void *sp_tx_thread(void *opaque)
         wire = b->data;
         wire_len = b->len;
         (void)gen;
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
         if (z) {
             if (gen != zgen) {
                 zgen = gen;
@@ -743,7 +743,7 @@ static void *sp_tx_thread(void *opaque)
             if (!wire_len) {
                 /* cannot happen with a sane library; drop the connection so
                  * that both streams start again */
-                error_report("spacetop remote gpu: compression failed");
+                error_report("spacebox remote gpu: compression failed");
                 shutdown(fd, SHUT_RDWR);
                 zgen = 0;
             }
@@ -942,7 +942,7 @@ static void sp_rx(void *opaque)
 
         unwrapped = sp_rx_unwrap();
         if (unwrapped < 0) {
-            error_report("spacetop remote gpu: bad compressed data, closing");
+            error_report("spacebox remote gpu: bad compressed data, closing");
             closed = true;
         } else {
             sp.rx_bytes += sp.rx->len - had;
@@ -954,7 +954,7 @@ static void sp_rx(void *opaque)
 
         memcpy(&h, sp.rx->data + off, sizeof(h));
         if (h.magic != SP_MAGIC) {
-            error_report("spacetop remote gpu: bad frame, closing");
+            error_report("spacebox remote gpu: bad frame, closing");
             closed = true;
             break;
         }
@@ -976,7 +976,7 @@ static void sp_rx(void *opaque)
                 continue; /* resent, already handled */
             }
             if (h.id != sp.rx_id + 1) {
-                error_report("spacetop remote gpu: message %" PRIu64
+                error_report("spacebox remote gpu: message %" PRIu64
                              " after %" PRIu64 ", closing", h.id, sp.rx_id);
                 closed = true;
                 break;
@@ -1016,7 +1016,7 @@ static void sp_set_connected(int fd)
     g_byte_array_set_size(sp.rx, 0);
     g_byte_array_set_size(sp.rxw, 0);
     sp.rx_hello_in = false;
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
     ZSTD_DCtx_reset(sp.z_d, ZSTD_reset_session_only);
 #endif
     qemu_mutex_lock(&sp.tx_lock);
@@ -1309,8 +1309,8 @@ static bool sp_source_scan_submit(VirtIOGPU *g, uint32_t ctx_id,
                 g_hash_table_insert(sp.queries, g_memdup2(&key, sizeof(key)),
                                     GUINT_TO_POINTER(c[4]));
                 g_hash_table_add(sp.query_bufs, GUINT_TO_POINTER(c[4]));
-                if (getenv("SPACETOP_GPU_REMOTE_DEBUG_WAIT")) {
-                    fprintf(stderr, "[SPACETOP-QUERY] create ctx=%u (%s) type=%u res=%u\n",
+                if (getenv("SPACEBOX_GPU_REMOTE_DEBUG_WAIT")) {
+                    fprintf(stderr, "[SPACEBOX-QUERY] create ctx=%u (%s) type=%u res=%u\n",
                             ctx_id, ctx_id < 64 ? sp.ctx_name[ctx_id] : "?",
                             c[2] & 0xffff, c[4]);
                 }
@@ -1421,7 +1421,7 @@ static void sp_flush_seen(void)
 
 static void sp_flush_report(const char *who)
 {
-    fprintf(stderr, "[SPACETOP-REMOTE] %s screen updates=%u gaps over 12 ms=%u over 25 ms=%u"
+    fprintf(stderr, "[SPACEBOX-REMOTE] %s screen updates=%u gaps over 12 ms=%u over 25 ms=%u"
             " over 50 ms=%u longest_ms=%.1f\n", who, sp_flush.n, sp_flush.over12,
             sp_flush.over25, sp_flush.over50, sp_flush.max / 1000.0);
     sp_flush.n = sp_flush.over12 = sp_flush.over25 = sp_flush.over50 = 0;
@@ -1870,7 +1870,7 @@ static void sp_source_one(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
         }
     }
     sp.n_waited++;
-    if (getenv("SPACETOP_GPU_REMOTE_DEBUG_WAIT")) {
+    if (getenv("SPACEBOX_GPU_REMOTE_DEBUG_WAIT")) {
         static unsigned shown;
         struct virtio_gpu_transfer_host_3d t = { 0 };
 
@@ -1880,7 +1880,7 @@ static void sp_source_one(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd)
         if (shown++ % 200 < 30) {
             res = hdr.type == VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D ?
                   virtio_gpu_find_resource(g, t.resource_id) : NULL;
-            fprintf(stderr, "[SPACETOP-WAIT] type=0x%x fenced=%d ctx=%u len=%zu"
+            fprintf(stderr, "[SPACEBOX-WAIT] type=0x%x fenced=%d ctx=%u len=%zu"
                     " from_host_res=%u fmt=%u %ux%u box=%u,%u+%ux%u bytes=%" PRIu64
                     " fence_out=%u wait_out=%u hard_out=%u needs_sink=%d\n", hdr.type,
                     !!(hdr.flags & VIRTIO_GPU_FLAG_FENCE), hdr.ctx_id, req_len,
@@ -2111,7 +2111,7 @@ static void sp_source_connect(void *opaque)
         timer_mod(sp.retry, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 250);
         return;
     }
-    info_report("spacetop remote gpu: source connected to %s", sp.path);
+    info_report("spacebox remote gpu: source connected to %s", sp.path);
     sp_set_connected(fd);
 }
 
@@ -2269,7 +2269,7 @@ void sp_sink_response(VirtIOGPU *g, struct virtio_gpu_ctrl_command *cmd,
     if (!cmd->sp_seq) {
         /* The source already answered the guest and wants nothing back. */
         if (resp->type >= VIRTIO_GPU_RESP_ERR_UNSPEC) {
-            fprintf(stderr, "[SPACETOP-REMOTE] sink: command 0x%x failed with 0x%x "
+            fprintf(stderr, "[SPACEBOX-REMOTE] sink: command 0x%x failed with 0x%x "
                     "after the guest was told it succeeded\n",
                     cmd->cmd_hdr.type, resp->type);
         }
@@ -2310,7 +2310,7 @@ static void sp_sink_send_info(VirtIOGPU *g, bool caps)
             virgl_renderer_fill_caps(id, ver, buf);
             /* struct virgl_caps_v1 .bset.timer_query: byte 261, bit 4 (checked
              * against virgl_hw.h of the pinned virglrenderer). */
-            if (size > 261 && !getenv("SPACETOP_GPU_REMOTE_KEEP_TIMER_QUERY")) {
+            if (size > 261 && !getenv("SPACEBOX_GPU_REMOTE_KEEP_TIMER_QUERY")) {
                 buf[261] &= ~0x10;
             }
             sp_send(SP_INFO, 0, buf, size, NULL, 0, 1, id,
@@ -2438,13 +2438,13 @@ static void sp_input_event(DeviceState *dev, QemuConsole *src, InputEvent *evt)
         m.kind = 1;
         m.a = qemu_input_key_value_to_qcode(evt->u.key.data->key);
         m.b = evt->u.key.data->down;
-        spacetop_last_input_us = g_get_monotonic_time();
+        spacebox_last_input_us = g_get_monotonic_time();
         break;
     case INPUT_EVENT_KIND_BTN:
         m.kind = 2;
         m.a = evt->u.btn.data->button;
         m.b = evt->u.btn.data->down;
-        spacetop_last_input_us = g_get_monotonic_time();
+        spacebox_last_input_us = g_get_monotonic_time();
         break;
     case INPUT_EVENT_KIND_REL:
         m.kind = 3;
@@ -2476,7 +2476,7 @@ static void sp_input_sync(DeviceState *dev)
 }
 
 static const QemuInputHandler sp_input_handler = {
-    .name = "spacetop-remote-input",
+    .name = "spacebox-remote-input",
     .mask = INPUT_EVENT_MASK_KEY | INPUT_EVENT_MASK_BTN |
             INPUT_EVENT_MASK_REL | INPUT_EVENT_MASK_ABS,
     .event = sp_input_event,
@@ -2519,9 +2519,9 @@ static void sp_disconnected(void)
     /* Both ends keep their state. The source reconnects and the stream
      * continues from the last message the other end received. */
     if (sp.mode == SP_REMOTE_SINK) {
-        info_report("spacetop remote gpu: connection lost, waiting for the source");
+        info_report("spacebox remote gpu: connection lost, waiting for the source");
     } else {
-        info_report("spacetop remote gpu: connection lost, reconnecting");
+        info_report("spacebox remote gpu: connection lost, reconnecting");
         timer_mod(sp.retry, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 250);
     }
 }
@@ -2542,16 +2542,16 @@ static void sp_hello(SpHdr *h)
     qemu_mutex_unlock(&sp.tx_lock);
     if (resume) {
         sp.n_reconnect++;
-        info_report("spacetop remote gpu: resumed, peer has %" PRIu64 " of %"
+        info_report("spacebox remote gpu: resumed, peer has %" PRIu64 " of %"
                     PRIu64 " messages", (uint64_t)h->arg2, sp.tx_id);
     } else if (sp.mode == SP_REMOTE_SINK) {
         /* A source this renderer state does not belong to: start empty. */
-        info_report("spacetop remote gpu: source attached");
+        info_report("spacebox remote gpu: source attached");
         sp_tx_forget();
         sp_sink_reset(sp.g);
         sp.peer_session = h->arg0;
     } else if (sp.peer_session && sp.seq) {
-        error_report("spacetop remote gpu: the sink has lost this guest's "
+        error_report("spacebox remote gpu: the sink has lost this guest's "
                      "renderer state (it restarted); the guest display cannot "
                      "continue until the VM restarts");
         sp.broken = true;
@@ -2594,7 +2594,7 @@ static void sp_hello(SpHdr *h)
  * drift) is worked off by playing 1% faster; only when three times the target
  * has piled up is the oldest part dropped.
  *
- * The target starts at SPACETOP_AUDIO_BUFFER_MS (default 80). Each time the
+ * The target starts at SPACEBOX_AUDIO_BUFFER_MS (default 80). Each time the
  * buffer runs empty while sound is still arriving, the target goes up by 20 ms,
  * to at most 40 ms above the start. After 30 s without that it comes down by
  * 10 ms at a time. (A larger range was tried: on a link with half-second
@@ -2624,13 +2624,13 @@ static struct {
     uint64_t rx_bytes, played, dropped, underruns;
 } sp_aud;
 
-void spacetop_remote_audio_out(int freq, int channels, const void *buf, size_t len);
+void spacebox_remote_audio_out(int freq, int channels, const void *buf, size_t len);
 #ifdef __APPLE__
 /* audio/coreaudio.m */
-void spacetop_coreaudio_stats(uint64_t *requests, uint64_t *starved,
+void spacebox_coreaudio_stats(uint64_t *requests, uint64_t *starved,
                               uint32_t *frames, uint32_t *least_waiting);
-uint64_t spacetop_coreaudio_starved_total(void);
-uint32_t spacetop_coreaudio_request_us(void);
+uint64_t spacebox_coreaudio_starved_total(void);
+uint32_t spacebox_coreaudio_request_us(void);
 #endif
 
 #define SP_AUD_LEAD_OLD_US 20000 /* the lead the picture/sound offset was tuned with */
@@ -2639,12 +2639,12 @@ uint32_t spacetop_coreaudio_request_us(void);
 static int64_t sp_aud_lead(int64_t now)
 {
     if (!sp_aud.lead_us) {
-        const char *ms = getenv("SPACETOP_AUDIO_LEAD_MS");
+        const char *ms = getenv("SPACEBOX_AUDIO_LEAD_MS");
         int64_t request_us = 11610;
 
 #ifdef __APPLE__
-        if (spacetop_coreaudio_request_us()) {
-            request_us = spacetop_coreaudio_request_us();
+        if (spacebox_coreaudio_request_us()) {
+            request_us = spacebox_coreaudio_request_us();
         }
 #endif
         /*
@@ -2658,14 +2658,14 @@ static int64_t sp_aud_lead(int64_t now)
         sp_aud.lead_us = ms ? MAX(atoi(ms), 5) * 1000 :
             MAX(2 * request_us + 15000, (int64_t)sp_aud.target_ms * 1000 - 15000);
 #ifdef __APPLE__
-        sp_aud.dev_starved_seen = spacetop_coreaudio_starved_total();
+        sp_aud.dev_starved_seen = spacebox_coreaudio_starved_total();
 #endif
     }
 #ifdef __APPLE__
     {
         /* requests keep coming while nothing plays; only those during steady
          * playing count */
-        uint64_t st = spacetop_coreaudio_starved_total();
+        uint64_t st = spacebox_coreaudio_starved_total();
 
         if (st != sp_aud.dev_starved_seen) {
             if (sp_aud.playing && now - sp_aud.t_start > 500000 &&
@@ -2685,7 +2685,7 @@ static int64_t sp_aud_lead(int64_t now)
 }
 
 /*
- * Sound has a connection of its own (SPACETOP_GPU_REMOTE_AUDIO=<unix socket>,
+ * Sound has a connection of its own (SPACEBOX_GPU_REMOTE_AUDIO=<unix socket>,
  * the sink listens, the source connects). On the shared connection every late
  * or lost packet of the picture's data also holds up the sound behind it, and
  * a gap in sound is heard at once; on its own TCP connection the sound only
@@ -2723,7 +2723,7 @@ static bool sp_ach_source_ready(void)
         return true;
     }
     if (!sp_ach.path) {
-        sp_ach.path = getenv("SPACETOP_GPU_REMOTE_AUDIO");
+        sp_ach.path = getenv("SPACEBOX_GPU_REMOTE_AUDIO");
         if (!sp_ach.path) {
             sp_ach.path = "";
         }
@@ -2749,11 +2749,11 @@ static bool sp_ach_source_ready(void)
     }
 #endif
     sp_ach.fd = fd;
-    info_report("spacetop remote gpu: sound has its own connection");
+    info_report("spacebox remote gpu: sound has its own connection");
     return true;
 }
 
-void spacetop_remote_audio_out(int freq, int channels, const void *buf, size_t len)
+void spacebox_remote_audio_out(int freq, int channels, const void *buf, size_t len)
 {
     if (sp.mode != SP_REMOTE_SOURCE || sp.fd < 0 || !sp.hello_done) {
         return;
@@ -2898,23 +2898,23 @@ static void sp_sink_audio(SpHdr *h, const uint8_t *a)
             .freq = freq, .nchannels = channels, .fmt = AUDIO_FORMAT_S16,
             .endianness = 0,
         };
-        const char *ms = getenv("SPACETOP_AUDIO_BUFFER_MS");
+        const char *ms = getenv("SPACEBOX_AUDIO_BUFFER_MS");
         Error *err = NULL;
 
         if (!sp_aud.card.name) {
             /* the sink is started with -audiodev <backend>,id=spa */
             sp_aud.card.state = audio_state_by_name("spa", &err);
             if (!sp_aud.card.state ||
-                !AUD_register_card("spacetop-remote", &sp_aud.card, &err)) {
+                !AUD_register_card("spacebox-remote", &sp_aud.card, &err)) {
                 error_report_err(err);
                 sp_aud.failed = true;
                 return;
             }
         }
-        sp_aud.voice = AUD_open_out(&sp_aud.card, sp_aud.voice, "spacetop-remote",
+        sp_aud.voice = AUD_open_out(&sp_aud.card, sp_aud.voice, "spacebox-remote",
                                     NULL, sp_sink_audio_cb, &as);
         if (!sp_aud.voice) {
-            error_report("spacetop remote gpu: cannot open a sound output");
+            error_report("spacebox remote gpu: cannot open a sound output");
             sp_aud.failed = true;
             return;
         }
@@ -2928,14 +2928,14 @@ static void sp_sink_audio(SpHdr *h, const uint8_t *a)
         sp_aud.target = (size_t)freq * sp_aud.target_ms / 1000 * frame;
         sp_aud.playing = false;
         AUD_set_active_out(sp_aud.voice, 1);
-        /* For tests while nobody should hear anything: SPACETOP_AUDIO_SILENT=1
-         * plays at volume 0, SPACETOP_AUDIO_DUMP=<file> records what is
+        /* For tests while nobody should hear anything: SPACEBOX_AUDIO_SILENT=1
+         * plays at volume 0, SPACEBOX_AUDIO_DUMP=<file> records what is
          * handed to the backend. */
-        if (getenv("SPACETOP_AUDIO_SILENT")) {
+        if (getenv("SPACEBOX_AUDIO_SILENT")) {
             AUD_set_volume_out(sp_aud.voice, 1, 0, 0);
         }
-        if (getenv("SPACETOP_AUDIO_DUMP") && !sp_aud.dump) {
-            sp_aud.dump = fopen(getenv("SPACETOP_AUDIO_DUMP"), "wb");
+        if (getenv("SPACEBOX_AUDIO_DUMP") && !sp_aud.dump) {
+            sp_aud.dump = fopen(getenv("SPACEBOX_AUDIO_DUMP"), "wb");
         }
     }
 
@@ -3057,7 +3057,7 @@ static void sp_ach_sink_accept(void *opaque)
 static void sp_ach_sink_listen(void)
 {
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    const char *path = getenv("SPACETOP_GPU_REMOTE_AUDIO");
+    const char *path = getenv("SPACEBOX_GPU_REMOTE_AUDIO");
 
     if (!path || !*path) {
         return;
@@ -3069,7 +3069,7 @@ static void sp_ach_sink_listen(void)
     if (sp_ach.listen_fd < 0 ||
         bind(sp_ach.listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
         listen(sp_ach.listen_fd, 1) < 0) {
-        warn_report("spacetop remote gpu: cannot listen for sound on %s", path);
+        warn_report("spacebox remote gpu: cannot listen for sound on %s", path);
         return;
     }
     qemu_set_fd_handler(sp_ach.listen_fd, sp_ach_sink_accept, NULL, NULL);
@@ -3168,37 +3168,37 @@ static void sp_stats(void *opaque)
     qemu_mutex_unlock(&sp.tx_lock);
     sp_flush_report(sp.mode == SP_REMOTE_SOURCE ? "source" : "sink");
     if (sp.mode == SP_REMOTE_SINK && !sp_late_timer &&
-        getenv("SPACETOP_GPU_REMOTE_DEBUG_LOOP")) {
+        getenv("SPACEBOX_GPU_REMOTE_DEBUG_LOOP")) {
         /* a timer every 2 ms; only when asked for, it keeps the process awake */
         sp_late_timer = timer_new_ms(QEMU_CLOCK_REALTIME, sp_late_tick, NULL);
         sp_late_due = g_get_monotonic_time() + 2000;
         timer_mod(sp_late_timer, qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + 2);
     }
     if (sp.mode == SP_REMOTE_SOURCE || sp_late_timer) {
-        fprintf(stderr, "[SPACETOP-REMOTE] %s=%u over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
+        fprintf(stderr, "[SPACEBOX-REMOTE] %s=%u over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
                 sp.mode == SP_REMOTE_SOURCE ? "source answers from the sink" : "sink main loop checks",
                 sp_delay.n, sp_delay.over12, sp_delay.over25, sp_delay.over50, sp_delay.max / 1000.0);
     }
     memset(&sp_delay, 0, sizeof(sp_delay));
     qemu_mutex_lock(&sp.tx_lock);
-    fprintf(stderr, "[SPACETOP-REMOTE] %s messages written=%u queue-to-written over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
+    fprintf(stderr, "[SPACEBOX-REMOTE] %s messages written=%u queue-to-written over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
             sp.mode == SP_REMOTE_SOURCE ? "source" : "sink",
             sp_txd.n, sp_txd.over12, sp_txd.over25, sp_txd.over50, sp_txd.max / 1000.0);
     memset(&sp_txd, 0, sizeof(sp_txd));
     qemu_mutex_unlock(&sp.tx_lock);
-    fprintf(stderr, "[SPACETOP-REMOTE] %s messages received=%u later than the fastest by over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
+    fprintf(stderr, "[SPACEBOX-REMOTE] %s messages received=%u later than the fastest by over 12 ms=%u over 25 ms=%u over 50 ms=%u longest_ms=%.1f\n",
             sp.mode == SP_REMOTE_SOURCE ? "source" : "sink",
             sp_rxd.n, sp_rxd.over12, sp_rxd.over25, sp_rxd.over50, sp_rxd.max / 1000.0);
     memset(&sp_rxd, 0, sizeof(sp_rxd));
     if (sp.mode == SP_REMOTE_SINK) {
-        fprintf(stderr, "[SPACETOP-REMOTE] sink time running guest commands: total_ms=%.0f drawing_ms=%.0f (longest %.1f)"
+        fprintf(stderr, "[SPACEBOX-REMOTE] sink time running guest commands: total_ms=%.0f drawing_ms=%.0f (longest %.1f)"
                 " screen_update_ms=%.0f (longest %.1f) other longest %.1f\n",
                 sp_busy.total / 1000.0, sp_busy.submit / 1000.0, sp_busy.submit_max / 1000.0,
                 sp_busy.flush / 1000.0, sp_busy.flush_max / 1000.0, sp_busy.other_max / 1000.0);
         memset(&sp_busy, 0, sizeof(sp_busy));
     }
     if (sp.mode == SP_REMOTE_SOURCE && (sp_ach.sent || sp_ach.dropped)) {
-        fprintf(stderr, "[SPACETOP-REMOTE] source sound on its own connection: messages=%" PRIu64
+        fprintf(stderr, "[SPACEBOX-REMOTE] source sound on its own connection: messages=%" PRIu64
                 " skipped=%" PRIu64 "\n", sp_ach.sent, sp_ach.dropped);
         sp_ach.sent = sp_ach.dropped = 0;
     }
@@ -3209,9 +3209,9 @@ static void sp_stats(void *opaque)
         uint32_t dev_frames = 0, dev_least = 0;
 
 #ifdef __APPLE__
-        spacetop_coreaudio_stats(&dev_requests, &dev_starved, &dev_frames, &dev_least);
+        spacebox_coreaudio_stats(&dev_requests, &dev_starved, &dev_frames, &dev_least);
 #endif
-        fprintf(stderr, "[SPACETOP-REMOTE] sink sound: received_ms=%" PRIu64 " played_ms=%" PRIu64
+        fprintf(stderr, "[SPACEBOX-REMOTE] sink sound: received_ms=%" PRIu64 " played_ms=%" PRIu64
                 " dropped_ms=%" PRIu64 " ran_dry=%" PRIu64 " buffered_ms=%zu target_ms=%d played_faster_ms=%" PRIu64
                 " device_requests=%" PRIu64 " device_got_nothing=%" PRIu64
                 " device_request_frames=%u least_waiting_frames=%u"
@@ -3226,7 +3226,7 @@ static void sp_stats(void *opaque)
         sp_aud.rx_bytes = sp_aud.played = sp_aud.dropped = sp_aud.underruns = 0;
     }
     if (sp.mode == SP_REMOTE_SINK) {
-        fprintf(stderr, "[SPACETOP-REMOTE] sink frame pacing: screen updates=%" PRIu64 " held for their time=%" PRIu64
+        fprintf(stderr, "[SPACEBOX-REMOTE] sink frame pacing: screen updates=%" PRIu64 " held for their time=%" PRIu64
                 " too late for it=%" PRIu64 " shown at once after input=%" PRIu64
                 " allowance_ms=%.1f usual_spacing_ms=%.1f\n",
                 sp_pace.frames, sp_pace.paced, sp_pace.late_frames, sp_pace.unpaced_for_input,
@@ -3245,7 +3245,7 @@ static void sp_stats(void *opaque)
                 oldest = p;
             }
         }
-        fprintf(stderr, "[SPACETOP-REMOTE] source pending=%u", g_hash_table_size(sp.pending));
+        fprintf(stderr, "[SPACEBOX-REMOTE] source pending=%u", g_hash_table_size(sp.pending));
         if (oldest) {
             fprintf(stderr, " oldest: seq=%" PRIu64 " type=0x%x early=%d age_ms=%" PRId64,
                     oldest->seq, oldest->type, oldest->early,
@@ -3263,7 +3263,7 @@ static void sp_stats(void *opaque)
         sp.n_defer = sp.defer_bytes = 0;
         for (unsigned i = 0; i < 64; i++) {
             if (sp.ctx_qpoll[i]) {
-                fprintf(stderr, "[SPACETOP-REMOTE] source query polls answered here: "
+                fprintf(stderr, "[SPACEBOX-REMOTE] source query polls answered here: "
                         "ctx=%u (%s) %u\n", i, sp.ctx_name[i], sp.ctx_qpoll[i]);
                 sp.ctx_qpoll[i] = 0;
             }
@@ -3275,7 +3275,7 @@ static void sp_stats(void *opaque)
         QTAILQ_FOREACH(c, &sp.g->cmdq, next) nq++;
         QTAILQ_FOREACH(c, &sp.g->fenceq, next) nf++;
         c = QTAILQ_FIRST(&sp.g->cmdq);
-        fprintf(stderr, "[SPACETOP-REMOTE] sink cmdq=%u fenceq=%u blocked=%d", nq, nf,
+        fprintf(stderr, "[SPACEBOX-REMOTE] sink cmdq=%u fenceq=%u blocked=%d", nq, nf,
                 sp.g->parent_obj.renderer_blocked);
         if (c) {
             fprintf(stderr, " cmdq_head: seq=%" PRIu64 " type=0x%x", c->sp_seq, c->cmd_hdr.type);
@@ -3288,7 +3288,7 @@ static void sp_stats(void *opaque)
         }
         fprintf(stderr, "\n");
     }
-    fprintf(stderr, "[SPACETOP-REMOTE] %s ctrl=%" PRIu64 " submit=%" PRIu64
+    fprintf(stderr, "[SPACEBOX-REMOTE] %s ctrl=%" PRIu64 " submit=%" PRIu64
             " submit_bytes=%" PRIu64 " xfer=%" PRIu64 " xfer_bytes=%" PRIu64
             " mem=%" PRIu64 " mem_bytes=%" PRIu64 " back=%" PRIu64
             " back_bytes=%" PRIu64
@@ -3314,13 +3314,13 @@ void sp_remote_realize(VirtIOGPU *g, Error **errp)
     sp.g = g;
     sp.rx = g_byte_array_new();
     sp.rxw = g_byte_array_new();
-#ifdef SPACETOP_ZSTD
+#ifdef SPACEBOX_ZSTD
     sp.z_d = ZSTD_createDCtx();
 #endif
     qemu_mutex_init(&sp.tx_lock);
     qemu_cond_init(&sp.tx_cond);
     g_queue_init(&sp.tx_queue);
-    qemu_thread_create(&sp.tx_thread, "spacetop-gpu-tx", sp_tx_thread, NULL,
+    qemu_thread_create(&sp.tx_thread, "spacebox-gpu-tx", sp_tx_thread, NULL,
                        QEMU_THREAD_DETACHED);
     do {
         sp.session = ((uint64_t)g_random_int() << 32) | g_random_int();
@@ -3354,7 +3354,7 @@ void sp_remote_realize(VirtIOGPU *g, Error **errp)
         if (sp.listen_fd < 0 ||
             bind(sp.listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
             listen(sp.listen_fd, 1) < 0) {
-            error_setg_errno(errp, errno, "spacetop remote gpu: cannot listen "
+            error_setg_errno(errp, errno, "spacebox remote gpu: cannot listen "
                              "on %s", sp.path);
             return;
         }
@@ -3362,6 +3362,6 @@ void sp_remote_realize(VirtIOGPU *g, Error **errp)
         sp_ach_sink_listen();
         sp.input = qemu_input_handler_register(DEVICE(g), &sp_input_handler);
         qemu_input_handler_activate(sp.input);
-        info_report("spacetop remote gpu: sink listening on %s", sp.path);
+        info_report("spacebox remote gpu: sink listening on %s", sp.path);
     }
 }

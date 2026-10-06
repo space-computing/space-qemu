@@ -10,8 +10,8 @@
  * in use (their textures are made on first use); with pacing up to about 12. */
 #define SP_SLOTS 16
 /* hw/display/virtio-gpu-remote.c: when to show the frame being submitted, 0 = at once */
-extern int64_t spacetop_frame_due_us;
-extern int64_t spacetop_frame_gap_us;
+extern int64_t spacebox_frame_due_us;
+extern int64_t spacebox_frame_gap_us;
 enum SpSlotState { SP_FREE, SP_WRITING, SP_READY, SP_READING, SP_DISPLAYED };
 typedef struct SpSlot {
     egl_fb fb;
@@ -66,20 +66,20 @@ static void *sp_present_thread(void *opaque)
     int shown = -1;
     GLuint readfb;
     int64_t last_stats = 0, last_control = 0;
-    const char *scheduler = getenv("SPACETOP_PRESENT_SCHEDULER");
+    const char *scheduler = getenv("SPACEBOX_PRESENT_SCHEDULER");
     bool native = scheduler && !strcmp(scheduler, "native");
-    const char *phase_env = getenv("SPACETOP_PRESENT_PHASE_US");
+    const char *phase_env = getenv("SPACEBOX_PRESENT_PHASE_US");
     int phase_us = phase_env ? atoi(phase_env) : 0;
-    const char *phase_file = getenv("SPACETOP_PRESENT_PHASE_CONTROL");
-    /* SPACETOP_PRESENT_PROBE=<file>: one line per frame shown, "time_us r g b" */
-    FILE *probe = getenv("SPACETOP_PRESENT_PROBE") ? fopen(getenv("SPACETOP_PRESENT_PROBE"), "w") : NULL;
-    /* SPACETOP_PRESENT_STATS=<seconds between lines> */
-    const char *stats_env = getenv("SPACETOP_PRESENT_STATS");
+    const char *phase_file = getenv("SPACEBOX_PRESENT_PHASE_CONTROL");
+    /* SPACEBOX_PRESENT_PROBE=<file>: one line per frame shown, "time_us r g b" */
+    FILE *probe = getenv("SPACEBOX_PRESENT_PROBE") ? fopen(getenv("SPACEBOX_PRESENT_PROBE"), "w") : NULL;
+    /* SPACEBOX_PRESENT_STATS=<seconds between lines> */
+    const char *stats_env = getenv("SPACEBOX_PRESENT_STATS");
     int64_t stats_us = stats_env ? (int64_t)MAX(atoi(stats_env), 1) * 1000000 : 0;
     int64_t refresh_us = 8333, last_swap = 0, held_max = 0, phase_adj = 0;
     /* where between two refreshes a frame's time is kept: this fraction of a
-     * refresh before the one it is shown at (SPACETOP_PRESENT_PHASE_TARGET) */
-    double phase_target = getenv("SPACETOP_PRESENT_PHASE_TARGET") ? atof(getenv("SPACETOP_PRESENT_PHASE_TARGET")) : 0.5;
+     * refresh before the one it is shown at (SPACEBOX_PRESENT_PHASE_TARGET) */
+    double phase_target = getenv("SPACEBOX_PRESENT_PHASE_TARGET") ? atof(getenv("SPACEBOX_PRESENT_PHASE_TARGET")) : 0.5;
     bool waited_for_due = false;
     uint64_t held[7] = { 0 };
     {
@@ -90,10 +90,10 @@ static void *sp_present_thread(void *opaque)
     }
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
     if (SDL_GL_MakeCurrent(p->window, p->output)) {
-        fprintf(stderr, "[SPACETOP-PRESENT-ERROR] make_current: %s\n", SDL_GetError());
+        fprintf(stderr, "[SPACEBOX-PRESENT-ERROR] make_current: %s\n", SDL_GetError());
         return NULL;
     }
-    const char *interval = getenv("SPACETOP_PRESENT_INTERVAL");
+    const char *interval = getenv("SPACEBOX_PRESENT_INTERVAL");
     SDL_GL_SetSwapInterval(interval ? atoi(interval) : 1);
     glGenFramebuffers(1, &readfb);
     for (;;) {
@@ -191,14 +191,14 @@ static void *sp_present_thread(void *opaque)
         glBlitFramebuffer(0, 0, s->fb.width, s->fb.height,
                           0, 0, s->fb.width, s->fb.height,
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        spacetop_capture_client(s->fb.width, s->fb.height);
+        spacebox_capture_client(s->fb.width, s->fb.height);
         uint8_t probe_px[4] = { 0 };
         if (probe) {
             /* test aid: the colour at the centre of each frame shown */
             glBindFramebuffer(GL_READ_FRAMEBUFFER, readfb);
             glReadPixels(s->fb.width / 2, s->fb.height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, probe_px);
         }
-        spacetop_swap(p->window, s->fb.width, s->fb.height);
+        spacebox_swap(p->window, s->fb.width, s->fb.height);
         if (probe) {
             fprintf(probe, "%lld %u %u %u\n", (long long)g_get_monotonic_time(), probe_px[0], probe_px[1], probe_px[2]);
         }
@@ -236,7 +236,7 @@ static void *sp_present_thread(void *opaque)
         p->presented++;
         int64_t now = g_get_monotonic_time();
         if (stats_us && now - last_stats > stats_us) {
-            fprintf(stderr, "[SPACETOP-PRESENT-STATS] us=%lld submitted=%llu presented=%llu coalesced=%llu busy=%llu"
+            fprintf(stderr, "[SPACEBOX-PRESENT-STATS] us=%lld submitted=%llu presented=%llu coalesced=%llu busy=%llu"
                     " refresh_us=%lld held1=%llu held2=%llu held3=%llu held4=%llu held5=%llu held6plus=%llu held_max_ms=%.1f\n",
                     (long long)now, (unsigned long long)p->sequence,
                     (unsigned long long)p->presented, (unsigned long long)p->discarded,
@@ -259,12 +259,12 @@ static void *sp_present_thread(void *opaque)
 
 void sdl2_gl_present_init(struct sdl2_console *scon)
 {
-    const char *mode = getenv("SPACETOP_PRESENT_MODE");
+    const char *mode = getenv("SPACEBOX_PRESENT_MODE");
     if (!mode || strcmp(mode, "thread")) return;
     SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
     scon->renderctx = SDL_GL_CreateContext(scon->real_window);
     if (!scon->renderctx) {
-        fprintf(stderr, "[SPACETOP-PRESENT-ERROR] producer context: %s\n", SDL_GetError());
+        fprintf(stderr, "[SPACEBOX-PRESENT-ERROR] producer context: %s\n", SDL_GetError());
         SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
         return;
     }
@@ -276,7 +276,7 @@ void sdl2_gl_present_init(struct sdl2_console *scon)
     qemu_cond_init(&p->wake);
     CVReturn rc = CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &p->link);
     if (rc) {
-        fprintf(stderr, "[SPACETOP-PRESENT-ERROR] display link: %d\n", rc);
+        fprintf(stderr, "[SPACEBOX-PRESENT-ERROR] display link: %d\n", rc);
         SDL_GL_DeleteContext(scon->renderctx); scon->renderctx = NULL;
         SDL_GL_MakeCurrent(scon->real_window, scon->winctx);
         qemu_cond_destroy(&p->wake); qemu_mutex_destroy(&p->lock); g_free(p);
@@ -286,7 +286,7 @@ void sdl2_gl_present_init(struct sdl2_console *scon)
     CVDisplayLinkSetOutputCallback(p->link, sp_present_tick, p);
     qemu_thread_create(&p->thread, "sp-present", sp_present_thread, p, QEMU_THREAD_JOINABLE);
     CVDisplayLinkStart(p->link);
-    fprintf(stderr, "[SPACETOP-PRESENT] mode=thread slots=%d display=%u nonblocking_producer=1\n", SP_SLOTS, CGMainDisplayID());
+    fprintf(stderr, "[SPACEBOX-PRESENT] mode=thread slots=%d display=%u nonblocking_producer=1\n", SP_SLOTS, CGMainDisplayID());
 }
 
 static SpSlot *sp_present_acquire(struct sdl2_console *scon, int w, int h)
@@ -326,10 +326,10 @@ static void sp_present_submit(struct sdl2_console *scon, SpSlot *s)
     s->ready = fence;
     s->sequence = ++p->sequence;
     s->submitted = g_get_monotonic_time();
-    s->due = spacetop_frame_due_us;
-    s->gap = spacetop_frame_gap_us;
-    spacetop_frame_due_us = 0;
-    spacetop_frame_gap_us = 0;
+    s->due = spacebox_frame_due_us;
+    s->gap = spacebox_frame_gap_us;
+    spacebox_frame_due_us = 0;
+    spacebox_frame_gap_us = 0;
     s->state = SP_READY;
     qemu_cond_signal(&p->wake);
     qemu_mutex_unlock(&p->lock);

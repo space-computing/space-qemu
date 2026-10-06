@@ -810,14 +810,14 @@ int dpy_set_ui_info(QemuConsole *con, QemuUIInfo *info, bool delay)
     con->ui_info = *info;
     {
         /*
-         * Spacetop: a whole second made every window resize feel slow. The
+         * Spacebox: a whole second made every window resize feel slow. The
          * guest is told 150 ms after the last change
-         * (SPACETOP_UI_INFO_DELAY_MS).
+         * (SPACEBOX_UI_INFO_DELAY_MS).
          */
         static int delay_ms = -1;
 
         if (delay_ms < 0) {
-            const char *v = getenv("SPACETOP_UI_INFO_DELAY_MS");
+            const char *v = getenv("SPACEBOX_UI_INFO_DELAY_MS");
 
             delay_ms = v ? MAX(atoi(v), 0) : 150;
         }

@@ -9,10 +9,10 @@ install_data('qemu_32x32.bmp',
              rename: 'qemu.bmp',
              install_dir: qemu_icondir / 'hicolor' / '32x32' / 'apps')
 
-# Spacetop: the product logo for the SDL window (ui/sdl2.c). Made from
-# dev/spacetop/assets/brand/spacetop-logo-v1-white-1024.png by step12/make-icon.sh
-install_data('spacetop_512x512.bmp',
-             rename: 'spacetop.bmp',
+# Spacebox: the product logo for the SDL window (ui/sdl2.c). Made from
+# dev/spacebox/assets/brand/spacebox-logo-v1-white-1024.png by dev/spacebox/build/make-icon.sh
+install_data('spacebox_512x512.bmp',
+             rename: 'spacebox.bmp',
              install_dir: qemu_icondir / 'hicolor' / '512x512' / 'apps')
 
 install_data('qemu.svg',

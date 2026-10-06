@@ -41,9 +41,9 @@ typedef struct NoVoiceIn {
     RateCtl rate;
 } NoVoiceIn;
 
-/* Spacetop: hw/display/virtio-gpu-remote.c. In remote-source mode the sound
+/* Spacebox: hw/display/virtio-gpu-remote.c. In remote-source mode the sound
  * this backend "plays" (at the right speed) is sent to the sink. */
-void spacetop_remote_audio_out(int freq, int channels, const void *buf, size_t len);
+void spacebox_remote_audio_out(int freq, int channels, const void *buf, size_t len);
 
 static size_t no_write(HWVoiceOut *hw, void *buf, size_t len)
 {
@@ -52,7 +52,7 @@ static size_t no_write(HWVoiceOut *hw, void *buf, size_t len)
 
     if (bytes && hw->info.bits == 16 && hw->info.is_signed && !hw->info.is_float &&
         !hw->info.swap_endianness) {
-        spacetop_remote_audio_out(hw->info.freq, hw->info.nchannels, buf, bytes);
+        spacebox_remote_audio_out(hw->info.freq, hw->info.nchannels, buf, bytes);
     }
     return bytes;
 }

@@ -298,7 +298,7 @@ COREAUDIO_WRAPPER_FUNC(write, size_t, (HWVoiceOut *hw, void *buf, size_t size),
  * allowed to lock "buf_mutex", but disallowed to have any other locks.
  */
 /*
- * Spacetop: how often the device asked for sound and found too little waiting
+ * Spacebox: how often the device asked for sound and found too little waiting
  * (it then plays nothing for that whole request). Read by the remote-GPU sink's
  * statistics, hw/display/virtio-gpu-remote.c.
  */
@@ -307,29 +307,29 @@ static struct {
     uint64_t starved_total;     /* never reset */
     uint32_t frames, least_waiting;
     uint32_t request_us;        /* how much sound one request takes */
-} spacetop_ca = { .least_waiting = UINT32_MAX };
+} spacebox_ca = { .least_waiting = UINT32_MAX };
 
-uint64_t spacetop_coreaudio_starved_total(void);
-uint64_t spacetop_coreaudio_starved_total(void)
+uint64_t spacebox_coreaudio_starved_total(void);
+uint64_t spacebox_coreaudio_starved_total(void)
 {
-    return qatomic_read(&spacetop_ca.starved_total);
+    return qatomic_read(&spacebox_ca.starved_total);
 }
 
-uint32_t spacetop_coreaudio_request_us(void);
-uint32_t spacetop_coreaudio_request_us(void)
+uint32_t spacebox_coreaudio_request_us(void);
+uint32_t spacebox_coreaudio_request_us(void)
 {
-    return qatomic_read(&spacetop_ca.request_us);
+    return qatomic_read(&spacebox_ca.request_us);
 }
 
-void spacetop_coreaudio_stats(uint64_t *requests, uint64_t *starved,
+void spacebox_coreaudio_stats(uint64_t *requests, uint64_t *starved,
                               uint32_t *frames, uint32_t *least_waiting);
-void spacetop_coreaudio_stats(uint64_t *requests, uint64_t *starved,
+void spacebox_coreaudio_stats(uint64_t *requests, uint64_t *starved,
                               uint32_t *frames, uint32_t *least_waiting)
 {
-    *requests = qatomic_xchg(&spacetop_ca.requests, 0);
-    *starved = qatomic_xchg(&spacetop_ca.starved, 0);
-    *frames = spacetop_ca.frames;
-    *least_waiting = qatomic_xchg(&spacetop_ca.least_waiting, UINT32_MAX);
+    *requests = qatomic_xchg(&spacebox_ca.requests, 0);
+    *starved = qatomic_xchg(&spacebox_ca.starved, 0);
+    *frames = spacebox_ca.frames;
+    *least_waiting = qatomic_xchg(&spacebox_ca.least_waiting, UINT32_MAX);
 }
 
 static OSStatus audioDeviceIOProc(
@@ -359,20 +359,20 @@ static OSStatus audioDeviceIOProc(
 
     frameCount = core->audioDevicePropertyBufferFrameSize;
     pending_frames = hw->pending_emul / hw->info.bytes_per_frame;
-    spacetop_ca.frames = frameCount;
+    spacebox_ca.frames = frameCount;
     if (hw->info.freq) {
-        qatomic_set(&spacetop_ca.request_us,
+        qatomic_set(&spacebox_ca.request_us,
                     (uint32_t)((uint64_t)frameCount * 1000000 / hw->info.freq));
     }
-    qatomic_inc(&spacetop_ca.requests);
-    if (pending_frames < qatomic_read(&spacetop_ca.least_waiting)) {
-        qatomic_set(&spacetop_ca.least_waiting, pending_frames);
+    qatomic_inc(&spacebox_ca.requests);
+    if (pending_frames < qatomic_read(&spacebox_ca.least_waiting)) {
+        qatomic_set(&spacebox_ca.least_waiting, pending_frames);
     }
 
     /* if there are not enough samples, set signal and return */
     if (pending_frames < frameCount) {
-        qatomic_inc(&spacetop_ca.starved);
-        qatomic_inc(&spacetop_ca.starved_total);
+        qatomic_inc(&spacebox_ca.starved);
+        qatomic_inc(&spacebox_ca.starved_total);
         inInputTime = 0;
         coreaudio_buf_unlock (core, "audioDeviceIOProc(empty)");
         return 0;
@@ -395,7 +395,7 @@ static OSStatus audioDeviceIOProc(
     }
 
     /* Opt-in proof that nonzero guest PCM reaches the Mac output callback. */
-    if (getenv("SPACETOP_AUDIO_TRACE")) {
+    if (getenv("SPACEBOX_AUDIO_TRACE")) {
         static int64_t last;
         static uint64_t callbacks, nonzero;
         static float peak;
@@ -409,7 +409,7 @@ static OSStatus audioDeviceIOProc(
             if (amplitude > 0.00001f) nonzero++;
         }
         if (now - last >= 5000000) {
-            fprintf(stderr, "[SPACETOP-AUDIO] us=%lld device=%u callbacks=%llu nonzero=%llu peak=%f\n",
+            fprintf(stderr, "[SPACEBOX-AUDIO] us=%lld device=%u callbacks=%llu nonzero=%llu peak=%f\n",
                     (long long)now, core->outputDeviceID,
                     (unsigned long long)callbacks, (unsigned long long)nonzero, peak);
             last = now;

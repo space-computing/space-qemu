@@ -1,10 +1,10 @@
 /* Optional measurement hook. Captures this client's GL back buffer only,
  * never the macOS desktop or other applications. Disabled without env paths. */
-static void spacetop_capture_client(int width, int height)
+static void spacebox_capture_client(int width, int height)
 {
     static int64_t last_check;
-    const char *request = getenv("SPACETOP_CAPTURE_REQUEST");
-    const char *output = getenv("SPACETOP_CAPTURE_PPM");
+    const char *request = getenv("SPACEBOX_CAPTURE_REQUEST");
+    const char *output = getenv("SPACEBOX_CAPTURE_PPM");
     int64_t now;
     GLint read_fb, read_buffer, alignment, row_length, pack_buffer;
     GLenum before, after;
@@ -53,6 +53,6 @@ static void spacetop_capture_client(int width, int height)
         fclose(f);
     }
     g_free(pixels);
-    fprintf(stderr, "[SPACETOP-CAPTURE] size=%dx%d gl_before=0x%x gl_read=0x%x saved=%d\n",
+    fprintf(stderr, "[SPACEBOX-CAPTURE] size=%dx%d gl_before=0x%x gl_read=0x%x saved=%d\n",
             width, height, before, after, !!f);
 }

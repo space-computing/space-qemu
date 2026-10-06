@@ -36,7 +36,7 @@
 #include "qemu-main.h"
 
 #ifdef CONFIG_DARWIN
-void spacetop_scroll_tick(SDL_Window *window);
+void spacebox_scroll_tick(SDL_Window *window);
 #endif
 
 static int sdl2_num_outputs;
@@ -80,27 +80,27 @@ static struct sdl2_console *get_scon_from_window(uint32_t window_id)
     return NULL;
 }
 
-/* Opt-in 2x client window for the Spacetop native-Mac test build. */
-static int spacetop_pixel_scale(void)
+/* Opt-in 2x client window for the Spacebox native-Mac test build. */
+static int spacebox_pixel_scale(void)
 {
 #ifdef CONFIG_DARWIN
-    const char *scale = getenv("SPACETOP_RETINA_SCALE");
+    const char *scale = getenv("SPACEBOX_RETINA_SCALE");
     return scale && !strcmp(scale, "2") ? 2 : 1;
 #else
     return 1;
 #endif
 }
 
-static void spacetop_update_ui_info(struct sdl2_console *scon)
+static void spacebox_update_ui_info(struct sdl2_console *scon)
 {
     if (!scon->real_window || !dpy_ui_info_supported(scon->dcl.con)) return;
     QemuUIInfo info = *dpy_get_ui_info(scon->dcl.con);
     SDL_DisplayMode dm = {0};
     int width, height;
     SDL_GetWindowSize(scon->real_window, &width, &height);
-    info.width = width * spacetop_pixel_scale();
-    info.height = height * spacetop_pixel_scale();
-    if (spacetop_pixel_scale() == 2) {
+    info.width = width * spacebox_pixel_scale();
+    info.height = height * spacebox_pixel_scale();
+    if (spacebox_pixel_scale() == 2) {
         /*
          * Tell the guest how dense the pixels are (220 per inch) through the
          * monitor's physical size. Its compositor then picks the 2x scale by
@@ -114,7 +114,7 @@ static void spacetop_update_ui_info(struct sdl2_console *scon)
         info.refresh_rate = dm.refresh_rate * 1000;
     }
     dpy_set_ui_info(scon->dcl.con, &info, true);
-    fprintf(stderr, "[SPACETOP-DISPLAY-INFO] pixels=%ux%u refresh_mhz=%u\n",
+    fprintf(stderr, "[SPACEBOX-DISPLAY-INFO] pixels=%ux%u refresh_mhz=%u\n",
             info.width, info.height, info.refresh_rate);
 }
 
@@ -142,7 +142,7 @@ void sdl2_window_create(struct sdl2_console *scon)
 #endif
 
 #ifdef CONFIG_DARWIN
-    if (spacetop_pixel_scale() == 2) {
+    if (spacebox_pixel_scale() == 2) {
         flags |= SDL_WINDOW_ALLOW_HIGHDPI;
     }
     if (scon->opengl && scon->opts->gl != DISPLAY_GL_MODE_ES) {
@@ -153,11 +153,11 @@ void sdl2_window_create(struct sdl2_console *scon)
 #endif
     scon->real_window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED,
                                          SDL_WINDOWPOS_UNDEFINED,
-                                         surface_width(scon->surface) / spacetop_pixel_scale(),
-                                         surface_height(scon->surface) / spacetop_pixel_scale(),
+                                         surface_width(scon->surface) / spacebox_pixel_scale(),
+                                         surface_height(scon->surface) / spacebox_pixel_scale(),
                                          flags);
     /*
-     * Spacetop: SDL turns text input on by itself on desktop platforms. With it
+     * Spacebox: SDL turns text input on by itself on desktop platforms. With it
      * on, the host input method (for example the macOS Korean one) composes text
      * from the keystrokes and SDL does not deliver them as key events. A guest
      * display needs the raw keys; the guest has its own input method.
@@ -178,12 +178,12 @@ void sdl2_window_create(struct sdl2_console *scon)
         SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
 
         scon->winctx = SDL_GL_CreateContext(scon->real_window);
-        const char *interval = getenv("SPACETOP_SWAP_INTERVAL");
+        const char *interval = getenv("SPACEBOX_SWAP_INTERVAL");
         int requested = interval ? atoi(interval) : 1;
         int rc = SDL_GL_SetSwapInterval(requested);
         SDL_DisplayMode dm = {0};
         SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(scon->real_window), &dm);
-        fprintf(stderr, "[SPACETOP-SYNC] requested=%d actual=%d rc=%d display_hz=%d mode=%dx%d\n",
+        fprintf(stderr, "[SPACEBOX-SYNC] requested=%d actual=%d rc=%d display_hz=%d mode=%dx%d\n",
                 requested, SDL_GL_GetSwapInterval(), rc, dm.refresh_rate, dm.w, dm.h);
 #ifdef CONFIG_OPENGL
         sdl2_gl_present_init(scon);
@@ -192,15 +192,15 @@ void sdl2_window_create(struct sdl2_console *scon)
         /* The SDL renderer is only used by sdl2-2D, when OpenGL is disabled */
         scon->real_renderer = SDL_CreateRenderer(scon->real_window, -1, 0);
     }
-    if (spacetop_pixel_scale() == 2) {
+    if (spacebox_pixel_scale() == 2) {
         int w, h, pw, ph;
         SDL_SetWindowPosition(scon->real_window, 100, 100);
         SDL_GetWindowSize(scon->real_window, &w, &h);
         SDL_GL_GetDrawableSize(scon->real_window, &pw, &ph);
-        fprintf(stderr, "[SPACETOP-WINDOW] logical=%dx%d drawable=%dx%d shown=%d\n",
+        fprintf(stderr, "[SPACEBOX-WINDOW] logical=%dx%d drawable=%dx%d shown=%d\n",
                 w, h, pw, ph, !!(SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_SHOWN));
     }
-    spacetop_update_ui_info(scon);
+    spacebox_update_ui_info(scon);
     sdl_update_caption(scon);
 }
 
@@ -232,9 +232,9 @@ void sdl2_window_resize(struct sdl2_console *scon)
     }
 
     SDL_SetWindowSize(scon->real_window,
-                      surface_width(scon->surface) / spacetop_pixel_scale(),
-                      surface_height(scon->surface) / spacetop_pixel_scale());
-    spacetop_update_ui_info(scon);
+                      surface_width(scon->surface) / spacebox_pixel_scale(),
+                      surface_height(scon->surface) / spacebox_pixel_scale());
+    spacebox_update_ui_info(scon);
 }
 
 static void sdl2_redraw(struct sdl2_console *scon)
@@ -643,7 +643,7 @@ static void handle_mousewheel(SDL_Event *ev)
     struct sdl2_console *scon = get_scon_from_window(ev->wheel.windowID);
     SDL_MouseWheelEvent *wev = &ev->wheel;
     InputButton btn;
-    const char *trace=getenv("SPACETOP_SCROLL_TRACE");
+    const char *trace=getenv("SPACEBOX_SCROLL_TRACE");
     if (trace) { FILE *f=fopen(trace,"a"); if(f) { fprintf(f,"{\"stage\":\"sdl\",\"host_us\":%lld,\"x\":%d,\"y\":%d,\"precise_x\":%.9g,\"precise_y\":%.9g,\"direction\":%u}\n",(long long)g_get_monotonic_time(),wev->x,wev->y,wev->preciseX,wev->preciseY,wev->direction); fclose(f); } }
 
     if (!scon || !qemu_console_is_graphic(scon->dcl.con)) {
@@ -680,7 +680,7 @@ static void handle_windowevent(SDL_Event *ev)
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_RESIZED:
     case SDL_WINDOWEVENT_SIZE_CHANGED:
-        spacetop_update_ui_info(scon);
+        spacebox_update_ui_info(scon);
         sdl2_redraw(scon);
         break;
     case SDL_WINDOWEVENT_EXPOSED:
@@ -739,7 +739,7 @@ static void handle_windowevent(SDL_Event *ev)
     }
 }
 
-#include "spacetop-input-test.h"
+#include "spacebox-input-test.h"
 
 void sdl2_poll_events(struct sdl2_console *scon)
 {
@@ -752,10 +752,10 @@ void sdl2_poll_events(struct sdl2_console *scon)
         sdl_update_caption(scon);
     }
 
-    spacetop_window_request(scon);
-    spacetop_input_test(scon);
+    spacebox_window_request(scon);
+    spacebox_input_test(scon);
 #ifdef CONFIG_DARWIN
-    spacetop_scroll_tick(scon->real_window);
+    spacebox_scroll_tick(scon->real_window);
 #endif
     while (SDL_PollEvent(ev)) {
         switch (ev->type) {
@@ -1026,9 +1026,9 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
     dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/128x128/apps/qemu.png");
     icon = IMG_Load(dir);
 #else
-    /* Spacetop: the product logo when it is installed (a BMP, alpha is
+    /* Spacebox: the product logo when it is installed (a BMP, alpha is
      * honoured). On macOS SDL shows this image in the Dock. */
-    dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/512x512/apps/spacetop.bmp");
+    dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/512x512/apps/spacebox.bmp");
     icon = SDL_LoadBMP(dir);
     if (!icon) {
         /* QEMU's own: a 32x32x4 image. White pixels are transparent. */
@@ -1040,8 +1040,8 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
             SDL_SetColorKey(icon, SDL_TRUE, colorkey);
         }
     }
-    if (icon && getenv("SPACETOP_PRESENT_STATS")) {
-        fprintf(stderr, "[SPACETOP] window icon %dx%d, %d bits per pixel, from %s\n",
+    if (icon && getenv("SPACEBOX_PRESENT_STATS")) {
+        fprintf(stderr, "[SPACEBOX] window icon %dx%d, %d bits per pixel, from %s\n",
                 icon->w, icon->h, icon->format->BitsPerPixel, dir);
     }
 #endif

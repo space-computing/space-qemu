@@ -430,7 +430,7 @@ static void *hvf_cpu_thread_fn(void *arg)
 
     assert(hvf_enabled());
 
-    const char *qos = getenv("SPACETOP_VCPU_QOS");
+    const char *qos = getenv("SPACEBOX_VCPU_QOS");
     if (qos) {
         qos_class_t before, after;
         int relative = 0, rc = 0;
@@ -439,7 +439,7 @@ static void *hvf_cpu_thread_fn(void *arg)
             rc = pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
         }
         pthread_get_qos_class_np(pthread_self(), &after, &relative);
-        fprintf(stderr, "[SPACETOP-VCPU-QOS] cpu=%d before=0x%x after=0x%x rc=%d\n",
+        fprintf(stderr, "[SPACEBOX-VCPU-QOS] cpu=%d before=0x%x after=0x%x rc=%d\n",
                 cpu->cpu_index, before, after, rc);
     }
 

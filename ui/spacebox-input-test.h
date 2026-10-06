@@ -1,14 +1,14 @@
 /* Launcher command for this application's own visible window. */
-static void spacetop_window_request(struct sdl2_console *scon)
+static void spacebox_window_request(struct sdl2_console *scon)
 {
-    const char *path = getenv("SPACETOP_WINDOW_REQUEST");
+    const char *path = getenv("SPACEBOX_WINDOW_REQUEST");
     if (!path || !scon->real_window || access(path, F_OK)) return;
     unlink(path);
     SDL_RaiseWindow(scon->real_window);
     int w, h, pw, ph;
     SDL_GetWindowSize(scon->real_window, &w, &h);
     SDL_GL_GetDrawableSize(scon->real_window, &pw, &ph);
-    fprintf(stderr, "[SPACETOP-USER-WINDOW] logical=%dx%d drawable=%dx%d shown=%d minimized=%d mouse_grab=%d\n",
+    fprintf(stderr, "[SPACEBOX-USER-WINDOW] logical=%dx%d drawable=%dx%d shown=%d minimized=%d mouse_grab=%d\n",
             w, h, pw, ph,
             !!(SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_SHOWN),
             !!(SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_MINIMIZED),
@@ -17,9 +17,9 @@ static void spacetop_window_request(struct sdl2_console *scon)
 
 /* Synthetic events in this SDL application's queue. Opt-in local validation;
  * does not post events to macOS or inspect any other application. */
-static void spacetop_input_test(struct sdl2_console *scon)
+static void spacebox_input_test(struct sdl2_console *scon)
 {
-    const char *path = getenv("SPACETOP_INPUT_TEST");
+    const char *path = getenv("SPACEBOX_INPUT_TEST");
     if (!path || !scon->real_window) return;
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -65,7 +65,7 @@ static void spacetop_input_test(struct sdl2_console *scon)
     int w, h, pw, ph;
     SDL_GetWindowSize(scon->real_window, &w, &h);
     SDL_GL_GetDrawableSize(scon->real_window, &pw, &ph);
-    fprintf(stderr, "[SPACETOP-INPUT-TEST] command=%s a=%d b=%d absolute=%d grab=%d mouse_grab=%d logical=%dx%d drawable=%dx%d\n",
+    fprintf(stderr, "[SPACEBOX-INPUT-TEST] command=%s a=%d b=%d absolute=%d grab=%d mouse_grab=%d logical=%dx%d drawable=%dx%d\n",
             command, a, b, qemu_input_is_absolute(scon->dcl.con), gui_grab,
             SDL_GetWindowGrab(scon->real_window), w, h, pw, ph);
 }

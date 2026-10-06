@@ -77,14 +77,14 @@ if config_all_devices.has_key('CONFIG_VIRTIO_GPU')
   hw_display_modules += {'virtio-gpu': virtio_gpu_ss}
 
   if virgl.found() and opengl.found()
-    # spacetop: the remote GPU connection compresses itself when libzstd is there
-    spacetop_zstd = dependency('libzstd', version: '>=1.4.0', required: false,
+    # spacebox: the remote GPU connection compresses itself when libzstd is there
+    spacebox_zstd = dependency('libzstd', version: '>=1.4.0', required: false,
                                method: 'pkg-config')
-    configure_file(output: 'spacetop-zstd.h',
-                   configuration: {'SPACETOP_ZSTD': spacetop_zstd.found()})
+    configure_file(output: 'spacebox-zstd.h',
+                   configuration: {'SPACEBOX_ZSTD': spacebox_zstd.found()})
     virtio_gpu_gl_ss = ss.source_set()
     virtio_gpu_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', virgl, opengl],
-                         if_true: [files('virtio-gpu-gl.c', 'virtio-gpu-virgl.c', 'virtio-gpu-remote.c'), pixman, virgl, spacetop_zstd])
+                         if_true: [files('virtio-gpu-gl.c', 'virtio-gpu-virgl.c', 'virtio-gpu-remote.c'), pixman, virgl, spacebox_zstd])
     hw_display_modules += {'virtio-gpu-gl': virtio_gpu_gl_ss}
   endif
 

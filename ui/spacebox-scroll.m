@@ -4,7 +4,7 @@
 #include <SDL_syswm.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-extern int64_t spacetop_last_input_us;
+extern int64_t spacebox_last_input_us;
 
 static NSWindow *sp_window;
 static id sp_monitor;
@@ -14,7 +14,7 @@ static uint64_t sp_event_id;
 static bool sp_initialized;
 static void sp_log(NSEvent *event, const char *origin)
 {
-    const char *path = getenv("SPACETOP_SCROLL_TRACE");
+    const char *path = getenv("SPACEBOX_SCROLL_TRACE");
     if (!path) return;
     if (!sp_trace) { sp_trace = fopen(path, "a"); if (sp_trace) setvbuf(sp_trace,NULL,_IOLBF,0); }
     if (sp_trace) fprintf(sp_trace,"{\"stage\":\"native\",\"id\":%llu,\"host_us\":%lld,\"origin\":\"%s\",\"x\":%.9g,\"y\":%.9g,\"delta_x\":%.9g,\"delta_y\":%.9g,\"precise\":%d,\"phase\":%lu,\"momentum\":%lu,\"inverted\":%d}\n",(unsigned long long)++sp_event_id,(long long)g_get_monotonic_time(),origin,[event scrollingDeltaX],[event scrollingDeltaY],[event deltaX],[event deltaY],[event hasPreciseScrollingDeltas],(unsigned long)[event phase],(unsigned long)[event momentumPhase],[event isDirectionInvertedFromDevice]);
@@ -27,7 +27,7 @@ static int64_t sp_retry, sp_ping, sp_last_ready;
 static uint64_t sp_sequence;
 static void sp_bridge_poll(void)
 {
-    const char *path=getenv("SPACETOP_SCROLL_SOCKET");
+    const char *path=getenv("SPACEBOX_SCROLL_SOCKET");
     if (!path) return;
     if (sp_fd<0 && g_get_monotonic_time()>=sp_retry) {
         sp_retry=g_get_monotonic_time()+250000;
@@ -44,13 +44,13 @@ static void sp_bridge_poll(void)
     if(sp_fd<0)return;
     char reply[128];ssize_t n=recv(sp_fd,reply,sizeof(reply),0);
     if(n>0) {
-        if(!sp_ready) fprintf(stderr,"[SPACETOP-SCROLL] bridge_ready=1\n");
+        if(!sp_ready) fprintf(stderr,"[SPACEBOX-SCROLL] bridge_ready=1\n");
         sp_ready=true;sp_last_ready=g_get_monotonic_time();
     }
     else if(n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)) { close(sp_fd);sp_fd=-1;sp_ready=false;sp_pending_len=0;return; }
     int64_t now=g_get_monotonic_time();
     if(now-sp_ping>1000000) { send(sp_fd,"PING\n",5,0);sp_ping=now; }
-    if(sp_ready && now-sp_last_ready>3000000) { sp_ready=false;fprintf(stderr,"[SPACETOP-SCROLL] bridge_ready=0 timeout=1\n"); }
+    if(sp_ready && now-sp_last_ready>3000000) { sp_ready=false;fprintf(stderr,"[SPACEBOX-SCROLL] bridge_ready=0 timeout=1\n"); }
     if(sp_pending_len) {
         ssize_t wrote=send(sp_fd,sp_pending,sp_pending_len,0);
         if(wrote>0) { memmove(sp_pending,sp_pending+wrote,sp_pending_len-wrote);sp_pending_len-=wrote; }
@@ -60,9 +60,9 @@ static void sp_bridge_poll(void)
 static bool sp_route(NSEvent *event, const char *origin)
 {
     sp_log(event,origin);
-    const char *bypass=getenv("SPACETOP_SCROLL_BYPASS");
+    const char *bypass=getenv("SPACEBOX_SCROLL_BYPASS");
     if(bypass && !access(bypass,F_OK))return false;
-    if(!getenv("SPACETOP_SCROLL_SOCKET"))return false;
+    if(!getenv("SPACEBOX_SCROLL_SOCKET"))return false;
     sp_bridge_poll();
     if(!sp_ready)return false;
     bool precise=[event hasPreciseScrollingDeltas];
@@ -70,11 +70,11 @@ static bool sp_route(NSEvent *event, const char *origin)
      * Cocoa discrete delta uses Chromium's 40 points per Cocoa tick. */
     double x=precise ? -[event scrollingDeltaX] : -40.0*[event deltaX];
     double y=precise ? -[event scrollingDeltaY] : -40.0*[event deltaY];
-    spacetop_last_input_us=g_get_monotonic_time(); /* hw/display/virtio-gpu-remote.c */
+    spacebox_last_input_us=g_get_monotonic_time(); /* hw/display/virtio-gpu-remote.c */
     char line[192];int n=snprintf(line,sizeof(line),"%llu %lld %.9g %.9g %d %lu %lu\n",(unsigned long long)++sp_sequence,(long long)g_get_monotonic_time(),x,y,precise,(unsigned long)[event phase],(unsigned long)[event momentumPhase]);
     if(n>0 && n<sizeof(line) && sp_pending_len+n<=sizeof(sp_pending)) {
         memcpy(sp_pending+sp_pending_len,line,n);sp_pending_len+=n;sp_bridge_poll();
-    } else fprintf(stderr,"[SPACETOP-SCROLL-ERROR] bounded queue overflow\n");
+    } else fprintf(stderr,"[SPACEBOX-SCROLL-ERROR] bounded queue overflow\n");
     return true; /* Exactly one path; suppress SDL's quantized wheel. */
 }
 
@@ -100,7 +100,7 @@ static bool sp_route(NSEvent *event, const char *origin)
 - (NSEventModifierFlags)modifierFlags { return 0; }
 @end
 
-void spacetop_scroll_tick(SDL_Window *window)
+void spacebox_scroll_tick(SDL_Window *window)
 {
     if (!window) return;
     @autoreleasepool {
@@ -112,10 +112,10 @@ void spacetop_scroll_tick(SDL_Window *window)
                 if ([e window]!=sp_window) return e;
                 return sp_route(e,"device") ? nil : e;
             }];
-            fprintf(stderr,"[SPACETOP-SCROLL] local_monitor=1 no_system_event_tap=1\n");
+            fprintf(stderr,"[SPACEBOX-SCROLL] local_monitor=1 no_system_event_tap=1\n");
         }
         sp_bridge_poll();
-        const char *path=getenv("SPACETOP_SCROLL_TEST");
+        const char *path=getenv("SPACEBOX_SCROLL_TEST");
         if (!path) return;
         FILE *f=fopen(path,"r"); if (!f) return;
         double x=0,y=0; int precise=1,phase=4,momentum=0,inverted=1;

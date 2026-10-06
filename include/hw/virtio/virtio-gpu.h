@@ -139,7 +139,7 @@ struct virtio_gpu_ctrl_command {
     bool finished;
     /* Set if process_cmd deferred completion; keep at cmdq head for resume. */
     bool suspended;
-    /* Spacetop remote GPU, sink side: command received from a remote source. */
+    /* Spacebox remote GPU, sink side: command received from a remote source. */
     bool sp_remote;
     uint32_t sp_res;
     uint64_t sp_seq;
@@ -402,7 +402,7 @@ void virtio_gpu_virgl_resource_destroy(VirtIOGPU *g,
 int virtio_gpu_virgl_init(VirtIOGPU *g);
 GArray *virtio_gpu_virgl_get_capsets(VirtIOGPU *g);
 
-/* Spacetop remote GPU (hw/display/virtio-gpu-remote.c) */
+/* Spacebox remote GPU (hw/display/virtio-gpu-remote.c) */
 enum { SP_REMOTE_NONE, SP_REMOTE_SOURCE, SP_REMOTE_SINK };
 int sp_remote_mode(void);
 void sp_remote_realize(VirtIOGPU *g, Error **errp);

@@ -1,7 +1,7 @@
 #ifdef __aarch64__
 #include <arm_acle.h>
 __attribute__((target("crc")))
-static uint64_t spacetop_crc_pixels(const unsigned char *p, size_t length)
+static uint64_t spacebox_crc_pixels(const unsigned char *p, size_t length)
 {
     uint32_t a = 0, b = 0;
     for (size_t i = 0; i < length; i += 16) {
@@ -14,7 +14,7 @@ static uint64_t spacetop_crc_pixels(const unsigned char *p, size_t length)
     return ((uint64_t)a << 32) | b;
 }
 #else
-static uint64_t spacetop_crc_pixels(const unsigned char *p, size_t length)
+static uint64_t spacebox_crc_pixels(const unsigned char *p, size_t length)
 {
     uint64_t hash = UINT64_C(14695981039346656037);
     for (size_t i = 0; i < length; i++) { hash ^= p[i]; hash *= UINT64_C(1099511628211); }
@@ -25,7 +25,7 @@ static uint64_t spacetop_crc_pixels(const unsigned char *p, size_t length)
 /* Opt-in observations of this application's GL back buffer, never the desktop.
  * Each marker is black, white, then 12 little-endian bits (bench.html at DPR 2).
  * Readback is limited to one 448-pixel row. Trace disabled without both paths. */
-static void spacetop_wait_frame(int fps)
+static void spacebox_wait_frame(int fps)
 {
     static int previous_fps;
     static int64_t next;
@@ -40,17 +40,17 @@ static void spacetop_wait_frame(int fps)
     if (wait > 0 && wait < 40000) g_usleep(wait);
 }
 
-#include "spacetop-async-hash.h"
+#include "spacebox-async-hash.h"
 
-static void spacetop_swap(SDL_Window *window, int width, int height)
+static void spacebox_swap(SDL_Window *window, int width, int height)
 {
-    const char *path = getenv("SPACETOP_TRACE_FILE");
-    const char *enable = getenv("SPACETOP_TRACE_ENABLE");
-    const char *control = getenv("SPACETOP_SYNC_CONTROL");
+    const char *path = getenv("SPACEBOX_TRACE_FILE");
+    const char *enable = getenv("SPACEBOX_TRACE_ENABLE");
+    const char *control = getenv("SPACEBOX_SYNC_CONTROL");
     static FILE *trace;
     static int fps = -1;
     if (fps < 0) {
-        const char *value = getenv("SPACETOP_FRAME_HZ");
+        const char *value = getenv("SPACEBOX_FRAME_HZ");
         fps = value ? atoi(value) : 0;
     }
     static int64_t checked;
@@ -65,27 +65,27 @@ static void spacetop_swap(SDL_Window *window, int width, int height)
             if (fields >= 1 && interval >= 0 && interval <= 2 &&
                 interval != SDL_GL_GetSwapInterval()) {
                 int rc = SDL_GL_SetSwapInterval(interval);
-                fprintf(stderr, "[SPACETOP-SYNC-CHANGE] requested=%d actual=%d rc=%d\n",
+                fprintf(stderr, "[SPACEBOX-SYNC-CHANGE] requested=%d actual=%d rc=%d\n",
                         interval, SDL_GL_GetSwapInterval(), rc);
             }
             fclose(f);
         }
     }
     if (!path) {
-        spacetop_wait_frame(fps);
+        spacebox_wait_frame(fps);
         SDL_GL_SwapWindow(window);
         return;
     }
     bool pixel_trace = enable && !access(enable, F_OK);
-    const char *full_path = getenv("SPACETOP_FULL_HASH_ENABLE");
+    const char *full_path = getenv("SPACEBOX_FULL_HASH_ENABLE");
     int full_hash = pixel_trace ? (full_path && !access(full_path, F_OK)) : 2;
-    if (pixel_trace && full_hash == 1 && getenv("SPACETOP_ASYNC_HASH") &&
+    if (pixel_trace && full_hash == 1 && getenv("SPACEBOX_ASYNC_HASH") &&
         width == 2560 && height == 1600) {
         if (!trace) {
             trace = fopen(path, "a");
             if (trace) setvbuf(trace, NULL, _IOLBF, 0);
         }
-        if (trace) { spacetop_async_swap(window, width, height, trace, fps); return; }
+        if (trace) { spacebox_async_swap(window, width, height, trace, fps); return; }
     }
     int marker = -1;
     uint64_t content_hash = UINT64_C(14695981039346656037);
@@ -95,7 +95,7 @@ static void spacetop_swap(SDL_Window *window, int width, int height)
         unsigned char pixels[448 * 3];
         GLenum prior_error = glGetError();
         static int warned;
-        if (prior_error && warned++ < 4) fprintf(stderr, "[SPACETOP-GL-PRIOR] error=0x%x\n", prior_error);
+        if (prior_error && warned++ < 4) fprintf(stderr, "[SPACEBOX-GL-PRIOR] error=0x%x\n", prior_error);
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &fb);
         glGetIntegerv(GL_READ_BUFFER, &buffer);
         glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
@@ -136,7 +136,7 @@ static void spacetop_swap(SDL_Window *window, int width, int height)
             static unsigned char *full_pixels;
             if (!full_pixels) full_pixels = g_malloc((size_t)2560 * 1600 * 4);
             glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, full_pixels);
-            content_hash = spacetop_crc_pixels(full_pixels, (size_t)width * height * 4);
+            content_hash = spacebox_crc_pixels(full_pixels, (size_t)width * height * 4);
         }
         GLenum hash_error = glGetError();
         if (hash_error) error = hash_error;
@@ -147,7 +147,7 @@ static void spacetop_swap(SDL_Window *window, int width, int height)
         glPixelStorei(GL_PACK_ROW_LENGTH, row);
     }
     int64_t before = g_get_monotonic_time();
-    spacetop_wait_frame(fps);
+    spacebox_wait_frame(fps);
     SDL_GL_SwapWindow(window);
     int64_t after = g_get_monotonic_time();
     if (!trace) {

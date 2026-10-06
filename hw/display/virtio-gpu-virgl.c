@@ -1239,7 +1239,7 @@ static void virtio_gpu_fence_poll(void *opaque)
     VirtIOGPU *g = opaque;
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);
 
-    if (getenv("SPACETOP_RESOURCE_TRACE")) {
+    if (getenv("SPACEBOX_RESOURCE_TRACE")) {
         static int64_t last;
         int64_t now = g_get_monotonic_time();
         if (now - last > 10000000) {
@@ -1252,7 +1252,7 @@ static void virtio_gpu_fence_poll(void *opaque)
                 hostmem += res->hostmem;
                 blobs += res->blob_size;
             }
-            fprintf(stderr, "[SPACETOP-RESOURCES] us=%lld count=%u guest_backing=%llu hostmem=%llu blobs=%llu\n",
+            fprintf(stderr, "[SPACEBOX-RESOURCES] us=%lld count=%u guest_backing=%llu hostmem=%llu blobs=%llu\n",
                     (long long)now, count, (unsigned long long)backing,
                     (unsigned long long)hostmem, (unsigned long long)blobs);
             last = now;
