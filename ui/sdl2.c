@@ -1016,12 +1016,23 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
     dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/128x128/apps/qemu.png");
     icon = IMG_Load(dir);
 #else
-    /* Load a 32x32x4 image. White pixels are transparent. */
-    dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/32x32/apps/qemu.bmp");
+    /* Spacetop: the product logo when it is installed (a BMP, alpha is
+     * honoured). On macOS SDL shows this image in the Dock. */
+    dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/512x512/apps/spacetop.bmp");
     icon = SDL_LoadBMP(dir);
-    if (icon) {
-        uint32_t colorkey = SDL_MapRGB(icon->format, 255, 255, 255);
-        SDL_SetColorKey(icon, SDL_TRUE, colorkey);
+    if (!icon) {
+        /* QEMU's own: a 32x32x4 image. White pixels are transparent. */
+        g_free(dir);
+        dir = get_relocated_path(CONFIG_QEMU_ICONDIR "/hicolor/32x32/apps/qemu.bmp");
+        icon = SDL_LoadBMP(dir);
+        if (icon) {
+            uint32_t colorkey = SDL_MapRGB(icon->format, 255, 255, 255);
+            SDL_SetColorKey(icon, SDL_TRUE, colorkey);
+        }
+    }
+    if (icon && getenv("SPACETOP_PRESENT_STATS")) {
+        fprintf(stderr, "[SPACETOP] window icon %dx%d, %d bits per pixel, from %s\n",
+                icon->w, icon->h, icon->format->BitsPerPixel, dir);
     }
 #endif
     g_free(dir);
