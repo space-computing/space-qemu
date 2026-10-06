@@ -1233,6 +1233,26 @@ static void virtio_gpu_fence_poll(void *opaque)
     VirtIOGPU *g = opaque;
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);
 
+    if (getenv("SPACETOP_RESOURCE_TRACE")) {
+        static int64_t last;
+        int64_t now = g_get_monotonic_time();
+        if (now - last > 10000000) {
+            struct virtio_gpu_simple_resource *res;
+            unsigned count = 0;
+            uint64_t backing = 0, hostmem = 0, blobs = 0;
+            QTAILQ_FOREACH(res, &g->reslist, next) {
+                count++;
+                for (unsigned i = 0; i < res->iov_cnt; i++) backing += res->iov[i].iov_len;
+                hostmem += res->hostmem;
+                blobs += res->blob_size;
+            }
+            fprintf(stderr, "[SPACETOP-RESOURCES] us=%lld count=%u guest_backing=%llu hostmem=%llu blobs=%llu\n",
+                    (long long)now, count, (unsigned long long)backing,
+                    (unsigned long long)hostmem, (unsigned long long)blobs);
+            last = now;
+        }
+    }
+
     virgl_renderer_poll();
     virtio_gpu_process_cmdq(g);
     if (!QTAILQ_EMPTY(&g->cmdq) || !QTAILQ_EMPTY(&g->fenceq)) {

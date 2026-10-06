@@ -1875,6 +1875,12 @@ static void ram_block_add(RAMBlock *new_block, Error **errp)
         }
     }
 
+    if (getenv("SPACETOP_MEMORY_TRACE")) {
+        fprintf(stderr, "[SPACETOP-RAM] name=%s start=%p bytes=%llu\n",
+                memory_region_name(new_block->mr), new_block->host,
+                (unsigned long long)new_block->max_length);
+    }
+
     if (new_block->flags & RAM_GUEST_MEMFD) {
         int ret;
 
