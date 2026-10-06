@@ -30,6 +30,7 @@
 #include "ui/input.h"
 #include "ui/sdl2.h"
 #include "spacetop-capture.h"
+#include "spacetop-pacing.h"
 
 static void sdl2_set_scanout_mode(struct sdl2_console *scon, bool scanout)
 {
@@ -59,10 +60,7 @@ static void sdl2_gl_render_surface(struct sdl2_console *scon)
 
     surface_gl_render_texture(scon->gls, scon->surface);
     spacetop_capture_client(ww, wh);
-    SDL_GL_SwapWindow(scon->real_window);
-    if (getenv("SPACETOP_FRAME_TRACE")) {
-        fprintf(stderr, "[SPACETOP-SDL-SWAP] drawable=%dx%d\n", ww, wh);
-    }
+    spacetop_swap(scon->real_window, ww, wh);
 }
 
 void sdl2_gl_update(DisplayChangeListener *dcl,
@@ -250,8 +248,5 @@ void sdl2_gl_scanout_flush(DisplayChangeListener *dcl,
     egl_fb_blit(&scon->win_fb, &scon->guest_fb, !scon->y0_top);
 
     spacetop_capture_client(ww, wh);
-    SDL_GL_SwapWindow(scon->real_window);
-    if (getenv("SPACETOP_FRAME_TRACE")) {
-        fprintf(stderr, "[SPACETOP-SDL-SWAP] drawable=%dx%d\n", ww, wh);
-    }
+    spacetop_swap(scon->real_window, ww, wh);
 }

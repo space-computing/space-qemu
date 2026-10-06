@@ -348,6 +348,28 @@ static OSStatus audioDeviceIOProc(
         out += write_len;
     }
 
+    /* Opt-in proof that nonzero guest PCM reaches the Mac output callback. */
+    if (getenv("SPACETOP_AUDIO_TRACE")) {
+        static int64_t last;
+        static uint64_t callbacks, nonzero;
+        static float peak;
+        float *samples = outOutputData->mBuffers[0].mData;
+        size_t count = frameCount * hw->info.bytes_per_frame / sizeof(float);
+        int64_t now = g_get_monotonic_time();
+        callbacks++;
+        for (size_t i = 0; i < count; i++) {
+            float amplitude = fabsf(samples[i]);
+            if (amplitude > peak) peak = amplitude;
+            if (amplitude > 0.00001f) nonzero++;
+        }
+        if (now - last >= 5000000) {
+            fprintf(stderr, "[SPACETOP-AUDIO] us=%lld device=%u callbacks=%llu nonzero=%llu peak=%f\n",
+                    (long long)now, core->outputDeviceID,
+                    (unsigned long long)callbacks, (unsigned long long)nonzero, peak);
+            last = now;
+            peak = 0;
+        }
+    }
     coreaudio_buf_unlock (core, "audioDeviceIOProc");
     return 0;
 }

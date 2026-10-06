@@ -87,6 +87,23 @@ static int spacetop_pixel_scale(void)
 #endif
 }
 
+static void spacetop_update_ui_info(struct sdl2_console *scon)
+{
+    if (!scon->real_window || !dpy_ui_info_supported(scon->dcl.con)) return;
+    QemuUIInfo info = *dpy_get_ui_info(scon->dcl.con);
+    SDL_DisplayMode dm = {0};
+    int width, height;
+    SDL_GetWindowSize(scon->real_window, &width, &height);
+    info.width = width * spacetop_pixel_scale();
+    info.height = height * spacetop_pixel_scale();
+    if (SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(scon->real_window), &dm) == 0 && dm.refresh_rate > 0) {
+        info.refresh_rate = dm.refresh_rate * 1000;
+    }
+    dpy_set_ui_info(scon->dcl.con, &info, true);
+    fprintf(stderr, "[SPACETOP-DISPLAY-INFO] pixels=%ux%u refresh_mhz=%u\n",
+            info.width, info.height, info.refresh_rate);
+}
+
 void sdl2_window_create(struct sdl2_console *scon)
 {
     int flags = 0;
@@ -138,7 +155,13 @@ void sdl2_window_create(struct sdl2_console *scon)
         SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
 
         scon->winctx = SDL_GL_CreateContext(scon->real_window);
-        SDL_GL_SetSwapInterval(0);
+        const char *interval = getenv("SPACETOP_SWAP_INTERVAL");
+        int requested = interval ? atoi(interval) : 1;
+        int rc = SDL_GL_SetSwapInterval(requested);
+        SDL_DisplayMode dm = {0};
+        SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(scon->real_window), &dm);
+        fprintf(stderr, "[SPACETOP-SYNC] requested=%d actual=%d rc=%d display_hz=%d mode=%dx%d\n",
+                requested, SDL_GL_GetSwapInterval(), rc, dm.refresh_rate, dm.w, dm.h);
     } else {
         /* The SDL renderer is only used by sdl2-2D, when OpenGL is disabled */
         scon->real_renderer = SDL_CreateRenderer(scon->real_window, -1, 0);
@@ -151,6 +174,7 @@ void sdl2_window_create(struct sdl2_console *scon)
         fprintf(stderr, "[SPACETOP-WINDOW] logical=%dx%d drawable=%dx%d shown=%d\n",
                 w, h, pw, ph, !!(SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_SHOWN));
     }
+    spacetop_update_ui_info(scon);
     sdl_update_caption(scon);
 }
 
@@ -181,6 +205,7 @@ void sdl2_window_resize(struct sdl2_console *scon)
     SDL_SetWindowSize(scon->real_window,
                       surface_width(scon->surface) / spacetop_pixel_scale(),
                       surface_height(scon->surface) / spacetop_pixel_scale());
+    spacetop_update_ui_info(scon);
 }
 
 static void sdl2_redraw(struct sdl2_console *scon)
@@ -291,7 +316,9 @@ static void sdl_grab_start(struct sdl2_console *scon)
     } else {
         sdl_hide_cursor(scon);
     }
-    SDL_SetWindowGrab(scon->real_window, SDL_TRUE);
+    /* An absolute tablet needs no pointer confinement. */
+    SDL_SetWindowGrab(scon->real_window,
+        (qemu_input_is_absolute(scon->dcl.con) || absolute_enabled) ? SDL_FALSE : SDL_TRUE);
     gui_grab = 1;
     sdl_update_caption(scon);
 }
@@ -353,7 +380,7 @@ static void sdl_send_mouse_event(struct sdl2_console *scon, int dx, int dy,
         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_X,
                              x, 0, surface_width(scon->surface));
         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_Y,
-                             y, 0, surface_height(scon->surface) / spacetop_pixel_scale());
+                             y, 0, surface_height(scon->surface));
     } else {
         if (guest_cursor) {
             x -= guest_x;
@@ -621,13 +648,7 @@ static void handle_windowevent(SDL_Event *ev)
 
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_RESIZED:
-        {
-            QemuUIInfo info;
-            memset(&info, 0, sizeof(info));
-            info.width = ev->window.data1;
-            info.height = ev->window.data2;
-            dpy_set_ui_info(scon->dcl.con, &info, true);
-        }
+        spacetop_update_ui_info(scon);
         sdl2_redraw(scon);
         break;
     case SDL_WINDOWEVENT_EXPOSED:
@@ -649,6 +670,7 @@ static void handle_windowevent(SDL_Event *ev)
         scon->ignore_hotkeys = get_mod_state();
         break;
     case SDL_WINDOWEVENT_FOCUS_LOST:
+        sdl2_release_modifiers(scon);
         if (gui_grab && !gui_fullscreen) {
             sdl_grab_end(scon);
         }
@@ -682,6 +704,8 @@ static void handle_windowevent(SDL_Event *ev)
     }
 }
 
+#include "spacetop-input-test.h"
+
 void sdl2_poll_events(struct sdl2_console *scon)
 {
     SDL_Event ev1, *ev = &ev1;
@@ -693,6 +717,8 @@ void sdl2_poll_events(struct sdl2_console *scon)
         sdl_update_caption(scon);
     }
 
+    spacetop_window_request(scon);
+    spacetop_input_test(scon);
     while (SDL_PollEvent(ev)) {
         switch (ev->type) {
         case SDL_KEYDOWN:
@@ -888,7 +914,12 @@ static void sdl2_display_init(DisplayState *ds, DisplayOptions *o)
 #ifdef SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR /* only available since SDL 2.0.8 */
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
 #endif
+#ifdef CONFIG_DARWIN
+    /* Keep macOS application switching available with the absolute tablet. */
+    SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "0");
+#else
     SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
+#endif
 #ifdef SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED
     SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0");
 #endif

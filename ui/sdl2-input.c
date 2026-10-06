@@ -39,6 +39,13 @@ void sdl2_process_key(struct sdl2_console *scon,
         return;
     }
     qcode = qemu_input_map_usb_to_qcode[ev->keysym.scancode];
+#ifdef CONFIG_DARWIN
+    const char *cmd_ctrl = getenv("SPACETOP_CMD_CTRL");
+    if (cmd_ctrl && !strcmp(cmd_ctrl, "1")) {
+        if (ev->keysym.scancode == SDL_SCANCODE_LGUI) qcode = Q_KEY_CODE_CTRL;
+        if (ev->keysym.scancode == SDL_SCANCODE_RGUI) qcode = Q_KEY_CODE_CTRL_R;
+    }
+#endif
     trace_sdl2_process_key(ev->keysym.scancode, qcode,
                            ev->type == SDL_KEYDOWN ? "down" : "up");
     qkbd_state_key_event(scon->kbd, qcode, ev->type == SDL_KEYDOWN);
