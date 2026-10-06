@@ -40,6 +40,8 @@ static void spacetop_wait_frame(int fps)
     if (wait > 0 && wait < 40000) g_usleep(wait);
 }
 
+#include "spacetop-async-hash.h"
+
 static void spacetop_swap(SDL_Window *window, int width, int height)
 {
     const char *path = getenv("SPACETOP_TRACE_FILE");
@@ -77,6 +79,14 @@ static void spacetop_swap(SDL_Window *window, int width, int height)
     bool pixel_trace = enable && !access(enable, F_OK);
     const char *full_path = getenv("SPACETOP_FULL_HASH_ENABLE");
     int full_hash = pixel_trace ? (full_path && !access(full_path, F_OK)) : 2;
+    if (pixel_trace && full_hash == 1 && getenv("SPACETOP_ASYNC_HASH") &&
+        width == 2560 && height == 1600) {
+        if (!trace) {
+            trace = fopen(path, "a");
+            if (trace) setvbuf(trace, NULL, _IOLBF, 0);
+        }
+        if (trace) { spacetop_async_swap(window, width, height, trace, fps); return; }
+    }
     int marker = -1;
     uint64_t content_hash = UINT64_C(14695981039346656037);
     GLenum error = GL_NO_ERROR;
