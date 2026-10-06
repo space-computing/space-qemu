@@ -146,6 +146,15 @@ void sdl2_window_create(struct sdl2_console *scon)
                                          surface_width(scon->surface) / spacetop_pixel_scale(),
                                          surface_height(scon->surface) / spacetop_pixel_scale(),
                                          flags);
+    /*
+     * Spacetop: SDL turns text input on by itself on desktop platforms. With it
+     * on, the host input method (for example the macOS Korean one) composes text
+     * from the keystrokes and SDL does not deliver them as key events. A guest
+     * display needs the raw keys; the guest has its own input method.
+     */
+    if (qemu_console_is_graphic(scon->dcl.con)) {
+        SDL_StopTextInput();
+    }
     if (scon->opengl) {
         const char *driver = "opengl";
 
@@ -668,6 +677,9 @@ static void handle_windowevent(SDL_Event *ev)
         sdl2_redraw(scon);
         break;
     case SDL_WINDOWEVENT_FOCUS_GAINED:
+        if (qemu_console_is_graphic(scon->dcl.con)) {
+            SDL_StopTextInput(); /* see sdl2_window_create() */
+        }
         /* fall through */
     case SDL_WINDOWEVENT_ENTER:
         if (!gui_grab && (qemu_input_is_absolute(scon->dcl.con) || absolute_enabled)) {
