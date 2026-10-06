@@ -211,7 +211,75 @@ virtio_gpu_virgl_unmap_resource_blob(VirtIOGPU *g,
 
     return 0;
 }
+
+static void
+virtio_gpu_virgl_destroy_hostmem_region(VirtIOGPU *g,
+                                        struct virtio_gpu_virgl_resource *res)
+{
+    struct virtio_gpu_virgl_hostmem_region *vmr = to_hostmem_region(res->mr);
+    VirtIOGPUBase *b = VIRTIO_GPU_BASE(g);
+
+    /*
+     * vmr is not QOM-owned, so object_finalize() does not free it; the unmap
+     * step 3 normally does. Reset can run here at any stage of an in-flight
+     * unmap, where step 3 may not run. This and the finalizer both hold the
+     * BQL, so free vmr or hand it to object_finalize() per the stage.
+     */
+    if (vmr->finish_unmapping) {
+        /* Finalizer ran and balanced renderer_blocked; just free vmr. */
+        res->mr = NULL;
+        g_free(vmr);
+        virgl_renderer_resource_unmap(res->base.resource_id);
+        return;
+    }
+
+    if (res->mr->container != &b->hostmem) {
+        /* Async unmap detached the subregion; let the finalizer free vmr. */
+        OBJECT(vmr)->free = g_free;
+        res->mr = NULL;
+        return;
+    }
+
+    /* No unmap in flight; tear down here and neutralize the finalizer. */
+    OBJECT(vmr)->free = g_free;
+    vmr->g = NULL;
+    memory_region_set_enabled(res->mr, false);
+    memory_region_del_subregion(&b->hostmem, res->mr);
+    object_unparent(OBJECT(vmr));
+    res->mr = NULL;
+
+    virgl_renderer_resource_unmap(res->base.resource_id);
+}
 #endif
+
+void virtio_gpu_virgl_resource_destroy(VirtIOGPU *g,
+                                       struct virtio_gpu_simple_resource *res,
+                                       Error **errp)
+{
+    struct virtio_gpu_virgl_resource *vres =
+        container_of(res, struct virtio_gpu_virgl_resource, base);
+    struct iovec *res_iovs = NULL;
+    int num_iovs = 0;
+
+#if VIRGL_VERSION_MAJOR >= 1
+    if (vres->mr) {
+        virtio_gpu_virgl_destroy_hostmem_region(g, vres);
+    }
+#endif
+
+    virgl_renderer_resource_detach_iov(res->resource_id, &res_iovs, &num_iovs);
+    if (res_iovs && num_iovs) {
+        virtio_gpu_cleanup_mapping_iov(g, res_iovs, num_iovs);
+    }
+    /* The detached iov is the same allocation virgl took at attach time;
+     * clear res->iov so the base destroy does not free it again. */
+    res->iov = NULL;
+    res->iov_cnt = 0;
+
+    virgl_renderer_resource_unref(res->resource_id);
+
+    virtio_gpu_resource_destroy(g, res, errp);
+}
 
 static void virgl_cmd_create_resource_2d(VirtIOGPU *g,
                                          struct virtio_gpu_ctrl_command *cmd)
@@ -856,8 +924,14 @@ static void virgl_cmd_set_scanout_blob(VirtIOGPU *g,
         return;
     }
 
+    /* The scanout rect sizes the displaysurface (virtio_gpu_update_dmabuf
+     * resizes the console to r.width x r.height, and a zero-area surface
+     * aborts in qemu_memfd_alloc), so bound the rect exactly like
+     * virtio_gpu_do_set_scanout does for non-blob scanouts. */
     if (ss.width < 16 ||
         ss.height < 16 ||
+        ss.r.width < 16 ||
+        ss.r.height < 16 ||
         ss.r.x + ss.r.width > ss.width ||
         ss.r.y + ss.r.height > ss.height) {
         qemu_log_mask(LOG_GUEST_ERROR, "%s: illegal scanout %d bounds for"
@@ -987,6 +1061,8 @@ void virtio_gpu_virgl_process_cmd(VirtIOGPU *g,
         break;
     }
 
+    cmd->suspended = cmd_suspended;
+
     if (cmd_suspended || cmd->finished) {
         return;
     }
@@ -1004,10 +1080,27 @@ void virtio_gpu_virgl_process_cmd(VirtIOGPU *g,
     trace_virtio_gpu_fence_ctrl(cmd->cmd_hdr.fence_id, cmd->cmd_hdr.type);
 #if VIRGL_VERSION_MAJOR >= 1
     if (cmd->cmd_hdr.flags & VIRTIO_GPU_FLAG_INFO_RING_IDX) {
-        virgl_renderer_context_create_fence(cmd->cmd_hdr.ctx_id,
+        int ret = virgl_renderer_context_create_fence(cmd->cmd_hdr.ctx_id,
                                             VIRGL_RENDERER_FENCE_FLAG_MERGEABLE,
                                             cmd->cmd_hdr.ring_idx,
                                             cmd->cmd_hdr.fence_id);
+        if (ret) {
+            /*
+             * The renderer context is gone (e.g. its render-server
+             * worker died mid-teardown): this fence can never retire
+             * through the timeline.  Complete it now — the cmd is not
+             * yet on fenceq, so responding here both signals the fence
+             * to the guest and keeps it off the queue.  Leaving it
+             * pending wedges the guest's GPU scheduler (VIDEO_TDR_
+             * FAILURE bugcheck on Windows).
+             */
+            fprintf(stderr,
+                    "%s: create_fence failed (%d) for dead ctx %u; "
+                    "retiring fence %" PRIu64 " immediately\n",
+                    __func__, ret, cmd->cmd_hdr.ctx_id,
+                    (uint64_t)cmd->cmd_hdr.fence_id);
+            virtio_gpu_ctrl_response_nodata(g, cmd, VIRTIO_GPU_RESP_OK_NODATA);
+        }
         return;
     }
 #endif
@@ -1143,7 +1236,17 @@ static void virtio_gpu_fence_poll(void *opaque)
     virgl_renderer_poll();
     virtio_gpu_process_cmdq(g);
     if (!QTAILQ_EMPTY(&g->cmdq) || !QTAILQ_EMPTY(&g->fenceq)) {
-        timer_mod(gl->fence_poll, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 10);
+        /*
+         * On the render-server path virgl_renderer_poll() is the only place a
+         * retired renderer fence is discovered: virgl_renderer_get_poll_fd()
+         * is vrend-only and VIRGL_RENDERER_ASYNC_FENCE_CB is not enabled, so
+         * nothing wakes QEMU when a fence signals.  This period is therefore a
+         * hard floor under every guest operation that blocks on a fence, so
+         * keep it at the millisecond-timer granularity.  The timer only
+         * re-arms while cmdq/fenceq are non-empty, so it costs nothing at
+         * idle.
+         */
+        timer_mod(gl->fence_poll, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 1);
     }
 }
 
