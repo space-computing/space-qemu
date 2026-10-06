@@ -76,6 +76,17 @@ static struct sdl2_console *get_scon_from_window(uint32_t window_id)
     return NULL;
 }
 
+/* Opt-in 2x client window for the Spacetop native-Mac test build. */
+static int spacetop_pixel_scale(void)
+{
+#ifdef CONFIG_DARWIN
+    const char *scale = getenv("SPACETOP_RETINA_SCALE");
+    return scale && !strcmp(scale, "2") ? 2 : 1;
+#else
+    return 1;
+#endif
+}
+
 void sdl2_window_create(struct sdl2_console *scon)
 {
     int flags = 0;
@@ -99,10 +110,20 @@ void sdl2_window_create(struct sdl2_console *scon)
     }
 #endif
 
+#ifdef CONFIG_DARWIN
+    if (spacetop_pixel_scale() == 2) {
+        flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+    }
+    if (scon->opengl && scon->opts->gl != DISPLAY_GL_MODE_ES) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+    }
+#endif
     scon->real_window = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED,
                                          SDL_WINDOWPOS_UNDEFINED,
-                                         surface_width(scon->surface),
-                                         surface_height(scon->surface),
+                                         surface_width(scon->surface) / spacetop_pixel_scale(),
+                                         surface_height(scon->surface) / spacetop_pixel_scale(),
                                          flags);
     if (scon->opengl) {
         const char *driver = "opengl";
@@ -121,6 +142,14 @@ void sdl2_window_create(struct sdl2_console *scon)
     } else {
         /* The SDL renderer is only used by sdl2-2D, when OpenGL is disabled */
         scon->real_renderer = SDL_CreateRenderer(scon->real_window, -1, 0);
+    }
+    if (spacetop_pixel_scale() == 2) {
+        int w, h, pw, ph;
+        SDL_SetWindowPosition(scon->real_window, 100, 100);
+        SDL_GetWindowSize(scon->real_window, &w, &h);
+        SDL_GL_GetDrawableSize(scon->real_window, &pw, &ph);
+        fprintf(stderr, "[SPACETOP-WINDOW] logical=%dx%d drawable=%dx%d shown=%d\n",
+                w, h, pw, ph, !!(SDL_GetWindowFlags(scon->real_window) & SDL_WINDOW_SHOWN));
     }
     sdl_update_caption(scon);
 }
@@ -150,8 +179,8 @@ void sdl2_window_resize(struct sdl2_console *scon)
     }
 
     SDL_SetWindowSize(scon->real_window,
-                      surface_width(scon->surface),
-                      surface_height(scon->surface));
+                      surface_width(scon->surface) / spacetop_pixel_scale(),
+                      surface_height(scon->surface) / spacetop_pixel_scale());
 }
 
 static void sdl2_redraw(struct sdl2_console *scon)
@@ -324,7 +353,7 @@ static void sdl_send_mouse_event(struct sdl2_console *scon, int dx, int dy,
         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_X,
                              x, 0, surface_width(scon->surface));
         qemu_input_queue_abs(scon->dcl.con, INPUT_AXIS_Y,
-                             y, 0, surface_height(scon->surface));
+                             y, 0, surface_height(scon->surface) / spacetop_pixel_scale());
     } else {
         if (guest_cursor) {
             x -= guest_x;
