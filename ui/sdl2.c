@@ -35,6 +35,10 @@
 #include "qemu/log.h"
 #include "qemu-main.h"
 
+#ifdef CONFIG_DARWIN
+void spacetop_scroll_tick(SDL_Window *window);
+#endif
+
 static int sdl2_num_outputs;
 static struct sdl2_console *sdl2_console;
 
@@ -620,6 +624,8 @@ static void handle_mousewheel(SDL_Event *ev)
     struct sdl2_console *scon = get_scon_from_window(ev->wheel.windowID);
     SDL_MouseWheelEvent *wev = &ev->wheel;
     InputButton btn;
+    const char *trace=getenv("SPACETOP_SCROLL_TRACE");
+    if (trace) { FILE *f=fopen(trace,"a"); if(f) { fprintf(f,"{\"stage\":\"sdl\",\"host_us\":%lld,\"x\":%d,\"y\":%d,\"precise_x\":%.9g,\"precise_y\":%.9g,\"direction\":%u}\n",(long long)g_get_monotonic_time(),wev->x,wev->y,wev->preciseX,wev->preciseY,wev->direction); fclose(f); } }
 
     if (!scon || !qemu_console_is_graphic(scon->dcl.con)) {
         return;
@@ -654,6 +660,7 @@ static void handle_windowevent(SDL_Event *ev)
 
     switch (ev->window.event) {
     case SDL_WINDOWEVENT_RESIZED:
+    case SDL_WINDOWEVENT_SIZE_CHANGED:
         spacetop_update_ui_info(scon);
         sdl2_redraw(scon);
         break;
@@ -725,6 +732,9 @@ void sdl2_poll_events(struct sdl2_console *scon)
 
     spacetop_window_request(scon);
     spacetop_input_test(scon);
+#ifdef CONFIG_DARWIN
+    spacetop_scroll_tick(scon->real_window);
+#endif
     while (SDL_PollEvent(ev)) {
         switch (ev->type) {
         case SDL_KEYDOWN:
