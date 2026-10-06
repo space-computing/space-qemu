@@ -6,7 +6,12 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <pthread/qos.h>
 #include "qemu/thread.h"
-#define SP_SLOTS 4
+/* Frames kept ahead of the one on screen. Without pacing only a few are ever
+ * in use (their textures are made on first use); with pacing up to about 12. */
+#define SP_SLOTS 16
+/* hw/display/virtio-gpu-remote.c: when to show the frame being submitted, 0 = at once */
+extern int64_t spacetop_frame_due_us;
+extern int64_t spacetop_frame_gap_us;
 enum SpSlotState { SP_FREE, SP_WRITING, SP_READY, SP_READING, SP_DISPLAYED };
 typedef struct SpSlot {
     egl_fb fb;
@@ -14,6 +19,8 @@ typedef struct SpSlot {
     enum SpSlotState state;
     uint64_t sequence;
     int64_t submitted;
+    int64_t due;    /* show no earlier than this, 0 = at once */
+    int64_t gap;    /* usual spacing of the stream this frame belongs to, 0 = none */
 } SpSlot;
 typedef struct SpPresenter {
     SDL_Window *window;
@@ -64,6 +71,20 @@ static void *sp_present_thread(void *opaque)
     const char *phase_env = getenv("SPACETOP_PRESENT_PHASE_US");
     int phase_us = phase_env ? atoi(phase_env) : 0;
     const char *phase_file = getenv("SPACETOP_PRESENT_PHASE_CONTROL");
+    /* SPACETOP_PRESENT_PROBE=<file>: one line per frame shown, "time_us r g b" */
+    FILE *probe = getenv("SPACETOP_PRESENT_PROBE") ? fopen(getenv("SPACETOP_PRESENT_PROBE"), "w") : NULL;
+    /* SPACETOP_PRESENT_STATS=<seconds between lines> */
+    const char *stats_env = getenv("SPACETOP_PRESENT_STATS");
+    int64_t stats_us = stats_env ? (int64_t)MAX(atoi(stats_env), 1) * 1000000 : 0;
+    int64_t refresh_us = 8333, last_swap = 0, held_max = 0, phase_adj = 0;
+    bool waited_for_due = false;
+    uint64_t held[7] = { 0 };
+    {
+        CVTime period = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(p->link);
+        if (!(period.flags & kCVTimeIsIndefinite) && period.timeScale > 0 && period.timeValue > 0) {
+            refresh_us = period.timeValue * 1000000 / period.timeScale;
+        }
+    }
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
     if (SDL_GL_MakeCurrent(p->window, p->output)) {
         fprintf(stderr, "[SPACETOP-PRESENT-ERROR] make_current: %s\n", SDL_GetError());
@@ -93,16 +114,57 @@ static void *sp_present_thread(void *opaque)
         if (phase_us > 0 && phase_us <= 7000) g_usleep(phase_us);
         qemu_mutex_lock(&p->lock);
         if (p->stop) { qemu_mutex_unlock(&p->lock); break; }
-        int pick = -1;
+        int pick = -1, oldest = -1, newest = -1, n_due = 0;
+        bool stream = true;
+        int64_t pick_now = g_get_monotonic_time(), next_due = 0;
         for (int i = 0; i < SP_SLOTS; i++) {
             SpSlot *s = &p->slots[i];
-            if (s->state == SP_READY && sp_fence_done(s->ready) &&
-                (pick < 0 || s->sequence > p->slots[pick].sequence)) pick = i;
+            if (s->state != SP_READY || !sp_fence_done(s->ready)) continue;
+            int64_t due = s->due ? s->due + phase_adj : 0;
+            if (due > pick_now) {
+                if (!next_due || due < next_due) next_due = due;
+                continue;
+            }
+            n_due++;
+            if (!s->due || !s->gap) stream = false;
+            if (oldest < 0 || s->sequence < p->slots[oldest].sequence) oldest = i;
+            if (newest < 0 || s->sequence > p->slots[newest].sequence) newest = i;
+        }
+        if (n_due && (!stream || n_due >= 4)) {
+            /* Frames without a time, or far behind: the newest one, now. */
+            pick = newest;
+        } else if (n_due) {
+            /*
+             * A paced stream: in order, and not sooner after the previous
+             * frame than the stream's usual spacing in whole refreshes. The
+             * swap lands on the refresh after the wake-up, so wake just after
+             * the one before it (last_swap is a little after a refresh). When
+             * a second frame's time has come as well, one refresh sooner, so
+             * that being late is made up by a shorter frame instead of a
+             * dropped one.
+             */
+            SpSlot *s = &p->slots[oldest];
+            int64_t k = MAX((s->gap + refresh_us / 2) / refresh_us, 1);
+            if (n_due >= 2 && k > 1) k--;
+            int64_t earliest = last_swap ? last_swap + (k - 1) * refresh_us + refresh_us / 8 : 0;
+            if (earliest > pick_now) {
+                if (!next_due || earliest < next_due) next_due = earliest;
+            } else {
+                pick = oldest;
+            }
         }
         if (pick < 0) {
-            if (native) qemu_cond_timedwait(&p->wake, &p->lock, 1);
+            if (next_due) {
+                waited_for_due = n_due == 0;
+                qemu_cond_timedwait(&p->wake, &p->lock, (int)MAX((next_due - pick_now + 500) / 1000, 1));
+            } else if (native) {
+                qemu_cond_timedwait(&p->wake, &p->lock, 1);
+            }
             qemu_mutex_unlock(&p->lock); continue;
         }
+        int64_t pick_due = p->slots[pick].due ? p->slots[pick].due + phase_adj : 0;
+        bool pick_waited = waited_for_due && pick_due;
+        waited_for_due = false;
         SpSlot *s = &p->slots[pick];
         s->state = SP_READING;
         if (s->ready) { glDeleteSync(s->ready); s->ready = NULL; }
@@ -127,9 +189,42 @@ static void *sp_present_thread(void *opaque)
                           0, 0, s->fb.width, s->fb.height,
                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
         spacetop_capture_client(s->fb.width, s->fb.height);
+        uint8_t probe_px[4] = { 0 };
+        if (probe) {
+            /* test aid: the colour at the centre of each frame shown */
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, readfb);
+            glReadPixels(s->fb.width / 2, s->fb.height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, probe_px);
+        }
         spacetop_swap(p->window, s->fb.width, s->fb.height);
+        if (probe) {
+            fprintf(probe, "%lld %u %u %u\n", (long long)g_get_monotonic_time(), probe_px[0], probe_px[1], probe_px[2]);
+        }
         GLsync consumed = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         glFlush();
+        if (pick_waited) {
+            /*
+             * The swap returned at a display refresh. Keep the frames' times in
+             * the middle between two refreshes, so that small timing noise does
+             * not move a frame to the refresh before or after.
+             */
+            int64_t x = g_get_monotonic_time() - pick_due;
+            if (x >= 0 && x < 2 * refresh_us) {
+                phase_adj += (x - refresh_us / 2) / 16;
+                phase_adj = MAX(-refresh_us, MIN(phase_adj, refresh_us));
+            }
+        }
+        {
+            /* How long each guest frame stayed on screen, in display refreshes. */
+            int64_t t = g_get_monotonic_time();
+            if (stats_us && last_swap) {
+                int64_t dt = t - last_swap;
+                int ticks = (int)((dt + refresh_us / 2) / refresh_us);
+                ticks = ticks < 1 ? 1 : ticks > 6 ? 6 : ticks;
+                held[ticks]++;
+                if (dt > held_max) held_max = dt;
+            }
+            last_swap = t;
+        }
         qemu_mutex_lock(&p->lock);
         if (shown >= 0) p->slots[shown].state = SP_FREE;
         shown = pick;
@@ -137,15 +232,18 @@ static void *sp_present_thread(void *opaque)
         s->state = SP_DISPLAYED;
         p->presented++;
         int64_t now = g_get_monotonic_time();
-        if (getenv("SPACETOP_PRESENT_STATS") && now - last_stats > 10000000) {
-            uint64_t bytes = 0;
-            for (int i = 0; i < SP_SLOTS; i++) {
-                if (p->slots[i].state != SP_WRITING) bytes += (uint64_t)p->slots[i].fb.width * p->slots[i].fb.height * 4;
-            }
-            fprintf(stderr, "[SPACETOP-PRESENT-STATS] us=%lld submitted=%llu presented=%llu coalesced=%llu busy=%llu textures=%d bytes=%llu\n",
+        if (stats_us && now - last_stats > stats_us) {
+            fprintf(stderr, "[SPACETOP-PRESENT-STATS] us=%lld submitted=%llu presented=%llu coalesced=%llu busy=%llu"
+                    " refresh_us=%lld held1=%llu held2=%llu held3=%llu held4=%llu held5=%llu held6plus=%llu held_max_ms=%.1f\n",
                     (long long)now, (unsigned long long)p->sequence,
                     (unsigned long long)p->presented, (unsigned long long)p->discarded,
-                    (unsigned long long)p->busy, SP_SLOTS, (unsigned long long)bytes);
+                    (unsigned long long)p->busy, (long long)refresh_us,
+                    (unsigned long long)held[1], (unsigned long long)held[2],
+                    (unsigned long long)held[3], (unsigned long long)held[4],
+                    (unsigned long long)held[5], (unsigned long long)held[6],
+                    held_max / 1000.0);
+            memset(held, 0, sizeof(held));
+            held_max = 0;
             last_stats = now;
         }
         qemu_mutex_unlock(&p->lock);
@@ -225,6 +323,10 @@ static void sp_present_submit(struct sdl2_console *scon, SpSlot *s)
     s->ready = fence;
     s->sequence = ++p->sequence;
     s->submitted = g_get_monotonic_time();
+    s->due = spacetop_frame_due_us;
+    s->gap = spacetop_frame_gap_us;
+    spacetop_frame_due_us = 0;
+    spacetop_frame_gap_us = 0;
     s->state = SP_READY;
     qemu_cond_signal(&p->wake);
     qemu_mutex_unlock(&p->lock);

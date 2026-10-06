@@ -4,6 +4,7 @@
 #include <SDL_syswm.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+extern int64_t spacetop_last_input_us;
 
 static NSWindow *sp_window;
 static id sp_monitor;
@@ -69,6 +70,7 @@ static bool sp_route(NSEvent *event, const char *origin)
      * Cocoa discrete delta uses Chromium's 40 points per Cocoa tick. */
     double x=precise ? -[event scrollingDeltaX] : -40.0*[event deltaX];
     double y=precise ? -[event scrollingDeltaY] : -40.0*[event deltaY];
+    spacetop_last_input_us=g_get_monotonic_time(); /* hw/display/virtio-gpu-remote.c */
     char line[192];int n=snprintf(line,sizeof(line),"%llu %lld %.9g %.9g %d %lu %lu\n",(unsigned long long)++sp_sequence,(long long)g_get_monotonic_time(),x,y,precise,(unsigned long)[event phase],(unsigned long)[event momentumPhase]);
     if(n>0 && n<sizeof(line) && sp_pending_len+n<=sizeof(sp_pending)) {
         memcpy(sp_pending+sp_pending_len,line,n);sp_pending_len+=n;sp_bridge_poll();
